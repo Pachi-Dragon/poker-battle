@@ -1,3 +1,8 @@
 .enc.local
 api/.venv/
+api/.env
+api/src/__pycache__/
+api/src/*.py[cod]
+api/src/*$py.class
 web/node_modules/
+web/.env.local
