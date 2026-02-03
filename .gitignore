@@ -6,3 +6,7 @@ api/src/*.py[cod]
 api/src/*$py.class
 web/node_modules/
 web/.env.local
+web/.next/
+web/out/
+web/.DS_Store
+web/*.log
