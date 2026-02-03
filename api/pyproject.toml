@@ -6,4 +6,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi[standard]>=0.128.0",
+    "google-auth>=2.48.0",
+    "google-cloud-firestore>=2.23.0",
+    "python-jose[cryptography]>=3.5.0",
+    "python-socketio>=5.16.0",
+    "uvicorn[standard]>=0.40.0",
 ]
