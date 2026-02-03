@@ -1,12 +1,35 @@
-.enc.local
+# 環境変数（秘密情報）
+.env
+.env.local
+.env.*.local
+api/.env
+api/.env.*
+web/.env.local
+web/.env.*.local
+
+# Python (api)
 api/.venv/
 api/.env
 api/src/__pycache__/
+api/**/__pycache__/
 api/src/*.py[cod]
 api/src/*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js (web)
 web/node_modules/
-web/.env.local
 web/.next/
 web/out/
-web/.DS_Store
 web/*.log
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE（任意：チームで共有する場合はコメントアウト）
+# .idea/
+# .vscode/
+# .cursor/
