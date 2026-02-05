@@ -20,10 +20,26 @@ htmlcov/
 
 # Node / Next.js (web)
 web/node_modules/
+web/.pnp
+web/.pnp.*
+web/.yarn/*
+!web/.yarn/patches
+!web/.yarn/plugins
+!web/.yarn/releases
+!web/.yarn/versions
 web/.next/
 web/out/
+web/build/
+web/coverage/
+web/.vercel
+web/next-env.d.ts
 web/*.log
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
+web/.pnpm-debug.log*
 *.tsbuildinfo
+*.pem
 
 # OS
 .DS_Store
