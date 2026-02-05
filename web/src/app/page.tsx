@@ -1,4 +1,5 @@
 // web/src/app/page.tsx
+import Link from "next/link"
 import { auth } from "@/auth"
 import { SignIn } from "@/components/login-button"
 
@@ -20,9 +21,20 @@ export default async function Home() {
                         おかえりなさい、{session.user?.name}さん！
                     </p>
                     <p className="text-slate-500 mb-4">{session.user?.email}</p>
-                    <button className="bg-red-600 text-white px-4 py-2 rounded">
-                        ゲームを開始する（準備中）
-                    </button>
+                    <div className="flex flex-col gap-2">
+                        <Link
+                            href="/game/default"
+                            className="rounded bg-red-600 px-4 py-2 text-white"
+                        >
+                            6maxに参加する
+                        </Link>
+                        <button
+                            className="rounded bg-slate-300 px-4 py-2 text-slate-600"
+                            disabled
+                        >
+                            ヘッズアップ（準備中）
+                        </button>
+                    </div>
                 </div>
             )}
         </main>

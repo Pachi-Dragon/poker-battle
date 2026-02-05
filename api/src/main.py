@@ -1,15 +1,20 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from dotenv import load_dotenv
 
+from .game.manager import ConnectionManager, GameTable
+from .game.models import ActionPayload, JoinTablePayload
+
 # .envファイルを読み込む
 load_dotenv()
 
 app = FastAPI()
+manager = ConnectionManager()
+tables = {"default": GameTable(table_id="default")}
 
 # Next.js(フロントエンド)からのアクセスを許可
 app.add_middleware(
@@ -60,6 +65,86 @@ async def google_login(auth_data: AuthRequest):
     except ValueError:
         # トークンが不正な場合
         raise HTTPException(status_code=401, detail="Invalid Google Token")
+
+
+@app.websocket("/ws/game/{table_id}")
+async def websocket_game(websocket: WebSocket, table_id: str):
+    table = tables.setdefault(table_id, GameTable(table_id=table_id))
+    await manager.connect(table_id, websocket)
+    await manager.send(
+        websocket,
+        {"type": "tableState", "payload": table.to_state().model_dump()},
+    )
+    try:
+        while True:
+            message = await websocket.receive_json()
+            message_type = message.get("type")
+            payload = message.get("payload") or {}
+
+            if message_type == "joinTable":
+                data = JoinTablePayload(**payload)
+                table.join_player(data.player_id, data.name)
+                manager.set_player(websocket, data.player_id)
+                await manager.broadcast(
+                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                )
+            elif message_type == "leaveTable":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    table.leave_player(player_id)
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "tableState", "payload": table.to_state().model_dump()},
+                    )
+            elif message_type == "action":
+                data = ActionPayload(**payload)
+                table.record_action(data)
+                await manager.broadcast(
+                    table_id,
+                    {"type": "actionApplied", "payload": data.model_dump()},
+                )
+                await manager.broadcast(
+                    table_id,
+                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                )
+            elif message_type == "ready":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    table.mark_ready(player_id)
+                if table.all_ready():
+                    table.start_new_hand()
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "handState", "payload": table.to_state().model_dump()},
+                    )
+                await manager.broadcast(
+                    table_id,
+                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                )
+            elif message_type == "syncState":
+                await manager.send(
+                    websocket,
+                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                )
+            else:
+                await manager.send(
+                    websocket,
+                    {"type": "error", "payload": {"message": "Unknown message type"}},
+                )
+    except WebSocketDisconnect:
+        player_id = manager.get_player(websocket)
+        if player_id:
+            table.leave_player(player_id)
+            await manager.broadcast(
+                table_id,
+                {"type": "tableState", "payload": table.to_state().model_dump()},
+            )
+        manager.disconnect(websocket)
+    except Exception as exc:
+        await manager.send(
+            websocket, {"type": "error", "payload": {"message": str(exc)}}
+        )
+        manager.disconnect(websocket)
 
 if __name__ == "__main__":
     import uvicorn
