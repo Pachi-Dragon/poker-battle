@@ -23,7 +23,7 @@ export default async function Home() {
                     <p className="text-slate-500 mb-4">{session.user?.email}</p>
                     <div className="flex flex-col gap-2">
                         <Link
-                            href="/game/default"
+                            href="/game"
                             className="rounded bg-red-600 px-4 py-2 text-white"
                         >
                             6maxに参加する

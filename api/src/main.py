@@ -14,7 +14,7 @@ load_dotenv()
 
 app = FastAPI()
 manager = ConnectionManager()
-tables = {"default": GameTable(table_id="default")}
+table = GameTable(table_id="default")
 
 # Next.js(フロントエンド)からのアクセスを許可
 app.add_middleware(
@@ -67,9 +67,9 @@ async def google_login(auth_data: AuthRequest):
         raise HTTPException(status_code=401, detail="Invalid Google Token")
 
 
-@app.websocket("/ws/game/{table_id}")
-async def websocket_game(websocket: WebSocket, table_id: str):
-    table = tables.setdefault(table_id, GameTable(table_id=table_id))
+@app.websocket("/ws/game")
+async def websocket_game(websocket: WebSocket):
+    table_id = table.table_id
     await manager.connect(table_id, websocket)
     await manager.send(
         websocket,

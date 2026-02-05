@@ -13,17 +13,16 @@ import { BoardPot } from "./BoardPot"
 import { SeatCard } from "./SeatCard"
 
 interface GameClientProps {
-    tableId: string
     player: JoinTablePayload
 }
 
-export function GameClient({ tableId, player }: GameClientProps) {
+export function GameClient({ player }: GameClientProps) {
     const [tableState, setTableState] = useState<TableState | null>(null)
     const socketRef = useRef<WebSocket | null>(null)
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
     useEffect(() => {
-        const wsUrl = apiUrl.replace(/^http/, "ws") + `/ws/game/${tableId}`
+        const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
         const socket = new WebSocket(wsUrl)
         socketRef.current = socket
 
@@ -45,7 +44,7 @@ export function GameClient({ tableId, player }: GameClientProps) {
         return () => {
             socket.close()
         }
-    }, [apiUrl, tableId, player])
+    }, [apiUrl, player])
 
     const heroSeat = useMemo(() => {
         if (!tableState) return null
@@ -72,7 +71,7 @@ export function GameClient({ tableId, player }: GameClientProps) {
                 <div>
                     <h1 className="text-2xl font-semibold">Poker Battle</h1>
                     <p className="text-sm text-white/60">
-                        Table: {tableId} ・ You: {player.name}
+                        Table: default ・ You: {player.name}
                     </p>
                 </div>
                 <div className="rounded-full bg-white/10 px-4 py-2 text-xs text-white/70">
