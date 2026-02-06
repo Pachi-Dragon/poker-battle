@@ -37,7 +37,6 @@ export function GameClient({ player }: GameClientProps) {
         socket.addEventListener("message", (event) => {
             const message: GameMessage<TableState> = JSON.parse(event.data)
             if (message.type === "tableState" || message.type === "handState") {
-                console.log("Received TableState:", message.payload)
                 setTableState(message.payload ?? null)
             }
         })
@@ -45,7 +44,7 @@ export function GameClient({ player }: GameClientProps) {
         return () => {
             socket.close()
         }
-    }, [apiUrl, player])
+    }, [apiUrl, player.player_id, player.name])
 
     const heroSeat = useMemo(() => {
         if (!tableState) return null
@@ -70,7 +69,21 @@ export function GameClient({ player }: GameClientProps) {
         const socket = socketRef.current
         if (!socket || socket.readyState !== WebSocket.OPEN) return
         socket.send(
-            JSON.stringify({ type: "leaveTable", payload: { player_id: player.player_id } })
+            JSON.stringify({
+                type: "leaveTable",
+                payload: { player_id: player.player_id },
+            })
+        )
+    }
+
+    const handleReset = () => {
+        const socket = socketRef.current
+        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(
+            JSON.stringify({
+                type: "reset",
+                payload: {},
+            })
         )
     }
 
@@ -115,6 +128,7 @@ export function GameClient({ player }: GameClientProps) {
                         onAction={handleAction}
                         onReady={handleReady}
                         onLeave={handleLeave}
+                        onReset={handleReset}
                     />
                 </div>
             </div>

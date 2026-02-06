@@ -191,6 +191,24 @@ class GameTable:
         )
         self._post_blinds()
 
+    def reset(self) -> None:
+        for seat in self.seats:
+            seat.stack = self.buy_in
+            seat.last_action = None
+            seat.hole_cards = None
+            seat.is_ready = False
+            seat.is_folded = False
+            seat.is_all_in = False
+            seat.street_commit = 0
+            seat.raise_blocked = False
+        self.street = Street.waiting
+        self.pot = 0
+        self.board = []
+        self.action_history = []
+        self.folded_seats = set()
+        self.all_in_seats = set()
+        self._reset_street_state()
+
     def _post_blinds(self) -> None:
         sb_index = self._next_occupied_seat(self.dealer_seat)
         if sb_index is None:
@@ -258,7 +276,7 @@ class GameTable:
         to_call = max(0, self.current_bet - player_commit)
         amount = payload.amount or 0
         action = payload.action
-
+        
         if action == ActionType.fold:
             self.folded_seats.add(seat.seat_index)
             seat.is_folded = True
@@ -274,19 +292,22 @@ class GameTable:
         elif action == ActionType.call:
             if to_call == 0:
                 raise ValueError("Nothing to call")
+            # stackが少ない場合はstack分
             call_amount = min(to_call, seat.stack)
-            if call_amount == 0:
+            if call_amount <= 0:
                 raise ValueError("Insufficient stack")
+            # 既にベット済みの分はstackから引かず、未払い分だけ引く
             seat.stack -= call_amount
             self.pot += call_amount
-            self.street_contribs[seat.seat_index] += call_amount
-            seat.street_commit = self.street_contribs[seat.seat_index]
+            # table上の表示(commit)は実際のto_call分を表示する
+            self.street_contribs[seat.seat_index] = player_commit + call_amount
+            seat.street_commit = self.current_bet  # 画面上は(current_bet)を表示
             if call_amount < to_call or seat.stack == 0:
                 self.all_in_seats.add(seat.seat_index)
                 seat.is_all_in = True
             seat.last_action = "call"
             self.acted_seats.add(seat.seat_index)
-            self._record_action(seat, "call", call_amount)
+            self._record_action(seat, "call", self.street_contribs[seat.seat_index])
         elif action == ActionType.bet:
             if self.current_bet != 0:
                 raise ValueError("Cannot bet when there is a bet already")
@@ -341,7 +362,38 @@ class GameTable:
             self._record_action(
                 seat,
                 "raise",
-                add_amount,
+                self.street_contribs[seat.seat_index],
+                detail="full" if is_full_raise else "short",
+            )
+        elif action == ActionType.all_in:
+            if seat.stack == 0:
+                raise ValueError("Player has no stack")
+            all_in_amount = seat.stack + player_commit
+            seat.stack = 0
+            previous_bet = self.current_bet
+            required_total = previous_bet + self.min_raise
+            prior_acted = set(self.acted_seats)
+            self.pot += all_in_amount - player_commit 
+            self.street_contribs[seat.seat_index] = all_in_amount
+            self.all_in_seats.add(seat.seat_index)
+            self.current_bet = max(self.current_bet, all_in_amount)
+            seat.is_all_in = True
+            seat.street_commit = self.street_contribs[seat.seat_index]
+            
+
+            
+            is_full_raise = all_in_amount >= required_total
+            if is_full_raise:
+                self.min_raise = all_in_amount - previous_bet
+                self.raise_blocked_seats = set()
+            else:
+                self.raise_blocked_seats = prior_acted
+            self.acted_seats = {seat.seat_index}
+            seat.last_action = "all-in"
+            self._record_action(
+                seat,
+                "all-in",
+                all_in_amount,
                 detail="full" if is_full_raise else "short",
             )
         else:
@@ -481,7 +533,10 @@ class ConnectionManager:
 
     async def broadcast(self, table_id: str, message: dict) -> None:
         for connection in list(self.active_connections.get(table_id, set())):
-            await connection.send_json(message)
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
 
     async def send(self, websocket: WebSocket, message: dict) -> None:
         await websocket.send_json(message)

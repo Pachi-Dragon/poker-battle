@@ -22,6 +22,7 @@ class ActionType(str, Enum):
     call = "call"
     bet = "bet"
     raise_ = "raise"
+    all_in = "all-in"
 
 
 class PlayerInfo(BaseModel):

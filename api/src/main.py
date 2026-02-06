@@ -126,6 +126,12 @@ async def websocket_game(websocket: WebSocket):
                     websocket,
                     {"type": "tableState", "payload": table.to_state().model_dump()},
                 )
+            elif message_type == "reset":
+                table.reset()
+                await manager.broadcast(
+                    table_id,
+                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                )
             else:
                 await manager.send(
                     websocket,

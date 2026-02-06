@@ -29,6 +29,11 @@ export function SeatCard({ seat, isHero }: SeatCardProps) {
                       ? "Status: All-in"
                       : "Status: Active"}
             </div>
+            {occupied && (
+                <div className="mt-1 text-white/60">
+                    {seat.is_ready ? "Ready" : "Not ready"}
+                </div>
+            )}
             <div className="mt-1 text-white/70">
                 {seat.last_action ? `Action: ${seat.last_action}` : "Action: -"}
             </div>
