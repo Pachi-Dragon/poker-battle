@@ -1,13 +1,14 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
 import { ActionPayload, ActionType, TableState } from "@/lib/game/types"
+import { useEffect, useMemo, useState } from "react"
 
 interface ActionControlsProps {
     table: TableState | null
     playerId: string
     onAction: (payload: ActionPayload) => void
     onReady: () => void
+    onLeave: () => void
 }
 
 const actionButtons: { label: string; action: ActionType }[] = [
@@ -16,6 +17,7 @@ const actionButtons: { label: string; action: ActionType }[] = [
     { label: "Call", action: "call" },
     { label: "Bet", action: "bet" },
     { label: "Raise", action: "raise" },
+    { label: "All-In", action: "all-in" },
 ]
 
 export function ActionControls({
@@ -23,6 +25,7 @@ export function ActionControls({
     playerId,
     onAction,
     onReady,
+    onLeave,
 }: ActionControlsProps) {
     const [betSize, setBetSize] = useState(3)
     const isTurn = useMemo(() => {
@@ -45,10 +48,10 @@ export function ActionControls({
     const canBet = Boolean(table && seat && table.current_bet === 0)
     const canRaise = Boolean(
         table &&
-            seat &&
-            table.current_bet > 0 &&
-            !seat.raise_blocked &&
-            seat.stack + seat.street_commit > table.current_bet
+        seat &&
+        table.current_bet > 0 &&
+        !seat.raise_blocked &&
+        seat.stack + seat.street_commit > table.current_bet
     )
     const rawMin = table
         ? table.current_bet === 0
@@ -108,12 +111,12 @@ export function ActionControls({
                     {table?.current_bet === 0 ? "Bet" : "Raise To"}: {betSize}
                 </label>
                 <input
-                    type="range"
+                    type="number"
                     min={sliderMin}
                     max={sliderMax}
                     value={betSize}
                     onChange={(event) => setBetSize(Number(event.target.value))}
-                    className="mt-2 w-full"
+                    className="mt-2 w-full rounded border border-white/20 bg-black/30 px-3 py-2 text-sm text-white"
                 />
                 {table && (
                     <div className="mt-2 text-[10px] text-white/50">
@@ -134,6 +137,14 @@ export function ActionControls({
                     Waiting for your turn.
                 </p>
             )}
+            <button
+                type="button"
+                className="mt-4 w-full rounded bg-red-600 px-3 py-2 text-sm font-semibold hover:bg-red-500"
+                onClick={onLeave}
+                disabled={!table}
+            >
+                Leave Table
+            </button>
         </div>
     )
 }

@@ -7,7 +7,7 @@ export type Street =
     | "showdown"
     | "settlement"
 
-export type ActionType = "fold" | "check" | "call" | "bet" | "raise"
+export type ActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in"
 
 export interface SeatState {
     seat_index: number

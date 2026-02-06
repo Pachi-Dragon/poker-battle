@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
 import {
     ActionPayload,
     GameMessage,
     JoinTablePayload,
     TableState,
 } from "@/lib/game/types"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ActionControls } from "./ActionControls"
 import { ActionHistory } from "./ActionHistory"
 import { BoardPot } from "./BoardPot"
@@ -37,6 +37,7 @@ export function GameClient({ player }: GameClientProps) {
         socket.addEventListener("message", (event) => {
             const message: GameMessage<TableState> = JSON.parse(event.data)
             if (message.type === "tableState" || message.type === "handState") {
+                console.log("Received TableState:", message.payload)
                 setTableState(message.payload ?? null)
             }
         })
@@ -65,11 +66,18 @@ export function GameClient({ player }: GameClientProps) {
         )
     }
 
+    const handleLeave = () => {
+        const socket = socketRef.current
+        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(
+            JSON.stringify({ type: "leaveTable", payload: { player_id: player.player_id } })
+        )
+    }
+
     return (
         <div className="grid min-h-screen grid-rows-[auto_1fr] bg-emerald-950 px-6 py-8 text-white">
             <header className="mb-6 flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold">Poker Battle</h1>
                     <p className="text-sm text-white/60">
                         Table: default ・ You: {player.name}
                     </p>
@@ -91,10 +99,10 @@ export function GameClient({ player }: GameClientProps) {
                                 isHero={heroSeat?.seat_index === seat.seat_index}
                             />
                         )) ?? (
-                            <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
-                                Loading seats...
-                            </div>
-                        )}
+                                <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
+                                    Loading seats...
+                                </div>
+                            )}
                     </div>
                     {tableState && <BoardPot table={tableState} />}
                 </div>
@@ -106,6 +114,7 @@ export function GameClient({ player }: GameClientProps) {
                         playerId={player.player_id}
                         onAction={handleAction}
                         onReady={handleReady}
+                        onLeave={handleLeave}
                     />
                 </div>
             </div>
