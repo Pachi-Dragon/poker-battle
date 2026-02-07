@@ -8,7 +8,7 @@ interface ActionHistoryProps {
 export function ActionHistory({ actions, className = "" }: ActionHistoryProps) {
     return (
         <div
-            className={`h-48 overflow-y-auto rounded-2xl border border-white/20 bg-white/10 p-4 text-xs text-white ${className}`}
+            className={`h-full min-h-0 overflow-y-auto rounded-2xl border border-white/20 bg-white/10 p-4 text-xs text-white ${className}`}
         >
             <div className="mb-2 text-xs uppercase tracking-widest text-white/60">
                 Action History

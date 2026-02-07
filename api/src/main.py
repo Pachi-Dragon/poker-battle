@@ -7,7 +7,7 @@ from google.auth.transport import requests
 from dotenv import load_dotenv
 
 from .game.manager import ConnectionManager, GameTable
-from .game.models import ActionPayload, JoinTablePayload
+from .game.models import ActionPayload, JoinTablePayload, Street
 
 # .envファイルを読み込む
 load_dotenv()
@@ -88,6 +88,16 @@ async def websocket_game(websocket: WebSocket):
                 await manager.broadcast(
                     table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
                 )
+                # 2人以上参加かつ待機中なら自動でハンド開始
+                if (
+                    len([s for s in table.seats if s.player_id]) >= 2
+                    and table.street == Street.waiting
+                ):
+                    table.start_new_hand()
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "handState", "payload": table.to_state().model_dump()},
+                    )
             elif message_type == "leaveTable":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
@@ -107,29 +117,19 @@ async def websocket_game(websocket: WebSocket):
                     table_id,
                     {"type": "tableState", "payload": table.to_state().model_dump()},
                 )
-            elif message_type == "ready":
-                player_id = payload.get("player_id") or manager.get_player(websocket)
-                if player_id:
-                    table.mark_ready(player_id)
-                if table.all_ready():
+                # ハンド終了（settlement）後は2人以上いれば次のハンドを自動開始
+                if (
+                    table.street == Street.settlement
+                    and len([s for s in table.seats if s.player_id]) >= 2
+                ):
                     table.start_new_hand()
                     await manager.broadcast(
                         table_id,
                         {"type": "handState", "payload": table.to_state().model_dump()},
                     )
-                await manager.broadcast(
-                    table_id,
-                    {"type": "tableState", "payload": table.to_state().model_dump()},
-                )
             elif message_type == "syncState":
                 await manager.send(
                     websocket,
-                    {"type": "tableState", "payload": table.to_state().model_dump()},
-                )
-            elif message_type == "reset":
-                table.reset()
-                await manager.broadcast(
-                    table_id,
                     {"type": "tableState", "payload": table.to_state().model_dump()},
                 )
             else:

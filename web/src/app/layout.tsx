@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-    title: "Poker Battle",
-    description: "Poker Battle Online",
+    title: "Dragons Poker Online",
+    description: "Dragons Poker Online",
 }
 
 export default function RootLayout({
