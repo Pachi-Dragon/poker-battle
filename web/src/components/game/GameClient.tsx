@@ -4,6 +4,7 @@ import {
     ActionPayload,
     GameMessage,
     JoinTablePayload,
+    ReserveSeatPayload,
     TableState,
 } from "@/lib/game/types"
 import { useRouter } from "next/navigation"
@@ -30,14 +31,38 @@ export function GameClient({
     const [tableState, setTableState] = useState<TableState | null>(null)
     const tableStateRef = useRef<TableState | null>(null)
     const transitionTimeoutRef = useRef<number | null>(null)
+    const revealTimeoutRef = useRef<number | null>(null)
     const pendingStateRef = useRef<TableState | null>(null)
     const isAnimatingRef = useRef(false)
+    const chipRevealDelayMs = 300
+    const chipAnimationMs = 650
     const socketRef = useRef<WebSocket | null>(null)
     const actionControlsRef = useRef<HTMLDivElement | null>(null)
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
     const [actionControlsHeight, setActionControlsHeight] = useState<number | null>(
         null
     )
+    const timeLimitSeconds = 30
+    const timeLimitMs = timeLimitSeconds * 1000
+    const [timeLimitEnabled, setTimeLimitEnabled] = useState(false)
+    const [timeLeftMs, setTimeLeftMs] = useState(timeLimitMs)
+    const [forceAllFold, setForceAllFold] = useState(false)
+    const timerRef = useRef<number | null>(null)
+    const isHandInProgress = Boolean(
+        tableState &&
+            ["preflop", "flop", "turn", "river", "showdown"].includes(tableState.street)
+    )
+
+    useEffect(() => {
+        const stored = window.localStorage.getItem("pokerTimeLimitEnabled")
+        if (stored !== null) {
+            setTimeLimitEnabled(stored === "1")
+        }
+    }, [])
+
+    useEffect(() => {
+        window.localStorage.setItem("pokerTimeLimitEnabled", timeLimitEnabled ? "1" : "0")
+    }, [timeLimitEnabled])
 
     useEffect(() => {
         const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
@@ -92,16 +117,22 @@ export function GameClient({
                     }
                     isAnimatingRef.current = true
                     pendingStateRef.current = nextState
-                    setTableState(transitionState)
+                    setTableState(prevState)
                     if (transitionTimeoutRef.current) {
                         window.clearTimeout(transitionTimeoutRef.current)
                     }
+                    if (revealTimeoutRef.current) {
+                        window.clearTimeout(revealTimeoutRef.current)
+                    }
+                    revealTimeoutRef.current = window.setTimeout(() => {
+                        setTableState(transitionState)
+                    }, chipRevealDelayMs)
                     transitionTimeoutRef.current = window.setTimeout(() => {
                         isAnimatingRef.current = false
                         const pending = pendingStateRef.current
                         pendingStateRef.current = null
                         setTableState(pending ?? nextState)
-                    }, 650)
+                    }, chipRevealDelayMs + chipAnimationMs)
                     return
                 }
                 setTableState(nextState)
@@ -122,6 +153,9 @@ export function GameClient({
             if (transitionTimeoutRef.current) {
                 window.clearTimeout(transitionTimeoutRef.current)
             }
+            if (revealTimeoutRef.current) {
+                window.clearTimeout(revealTimeoutRef.current)
+            }
         }
     }, [])
 
@@ -141,6 +175,59 @@ export function GameClient({
         if (!tableState) return null
         return tableState.seats.find((seat) => seat.player_id === player.player_id)
     }, [tableState, player.player_id])
+    const isWaitingPlayer = Boolean(tableState && !heroSeat)
+    const isHeroTurn = Boolean(
+        tableState &&
+            heroSeat &&
+            tableState.current_turn_seat !== null &&
+            tableState.current_turn_seat !== undefined &&
+            tableState.current_turn_seat === heroSeat.seat_index
+    )
+    const canStartHand = Boolean(
+        tableState &&
+            tableState.street === "waiting" &&
+            tableState.seats.filter((seat) => seat.player_id).length >= 2
+    )
+
+    useEffect(() => {
+        if (timerRef.current) {
+            window.clearInterval(timerRef.current)
+            timerRef.current = null
+        }
+        if (!timeLimitEnabled || !isHeroTurn) {
+            setTimeLeftMs(timeLimitMs)
+            setForceAllFold(false)
+            return
+        }
+        const startedAt = Date.now()
+        setTimeLeftMs(timeLimitMs)
+        setForceAllFold(false)
+        timerRef.current = window.setInterval(() => {
+            const elapsed = Date.now() - startedAt
+            const remaining = Math.max(0, timeLimitMs - elapsed)
+            setTimeLeftMs(remaining)
+            if (remaining <= 0) {
+                setForceAllFold(true)
+                if (timerRef.current) {
+                    window.clearInterval(timerRef.current)
+                    timerRef.current = null
+                }
+            }
+        }, 200)
+        return () => {
+            if (timerRef.current) {
+                window.clearInterval(timerRef.current)
+                timerRef.current = null
+            }
+        }
+    }, [
+        timeLimitEnabled,
+        isHeroTurn,
+        timeLimitMs,
+        tableState?.hand_number,
+        tableState?.street,
+        tableState?.current_turn_seat,
+    ])
 
     const handleAction = (payload: ActionPayload) => {
         const socket = socketRef.current
@@ -163,6 +250,30 @@ export function GameClient({
         } else {
             router.back()
         }
+    }
+
+    const handleReset = () => {
+        const socket = socketRef.current
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "resetTable" }))
+        }
+    }
+
+    const handleReserveSeat = (seatIndex: number) => {
+        const socket = socketRef.current
+        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        const payload: ReserveSeatPayload = {
+            player_id: player.player_id,
+            name: player.name,
+            seat_index: seatIndex,
+        }
+        socket.send(JSON.stringify({ type: "reserveSeat", payload }))
+    }
+
+    const handleStartHand = () => {
+        const socket = socketRef.current
+        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: "startHand" }))
     }
 
     const seatPositions = [
@@ -188,6 +299,10 @@ export function GameClient({
         { x: "6rem", y: "-5rem" },
         { x: "6rem", y: "5rem" },
     ]
+    const timeGaugePercent = timeLimitEnabled && isHeroTurn
+        ? Math.max(0, Math.min(100, (timeLeftMs / timeLimitMs) * 100))
+        : 100
+    const timeLeftSeconds = Math.max(0, Math.ceil(timeLeftMs / 1000))
 
     return (
         <div
@@ -206,6 +321,30 @@ export function GameClient({
                         disabled={!tableState}
                     >
                         離席
+                    </button>
+                    <button
+                        type="button"
+                        className="rounded bg-slate-700/80 px-2.5 py-1.5 text-xs font-semibold text-white/90 hover:bg-slate-600/80 shrink-0"
+                        onClick={handleReset}
+                        disabled={!tableState}
+                    >
+                        リセット
+                    </button>
+                    <button
+                        type="button"
+                        className={`rounded px-2.5 py-1.5 text-xs font-semibold shrink-0 ${
+                            timeLimitEnabled
+                                ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                : "bg-white/10 text-white/70 hover:bg-white/20"
+                        }`}
+                        onClick={() => {
+                            setTimeLimitEnabled((prev) => !prev)
+                            setForceAllFold(false)
+                            setTimeLeftMs(timeLimitMs)
+                        }}
+                        disabled={!tableState || isHandInProgress}
+                    >
+                        時間制限 {timeLimitEnabled ? "あり" : "なし"}
                     </button>
                 </div>
                 <div className="flex items-center justify-between">
@@ -248,6 +387,20 @@ export function GameClient({
                                     isTopSeat={isTopSeat}
                                     chipToX={chipVector.x}
                                     chipToY={chipVector.y}
+                                    canReserve={isWaitingPlayer && !seat.player_id}
+                                    showHoleCards={
+                                        heroSeat?.seat_index === seat.seat_index ||
+                                        tableState?.street === "showdown" ||
+                                        tableState?.street === "settlement"
+                                    }
+                                    showTimer={
+                                        timeLimitEnabled &&
+                                        isHeroTurn &&
+                                        tableState?.current_turn_seat === seat.seat_index
+                                    }
+                                    timeGaugePercent={timeGaugePercent}
+                                    timeLeftSeconds={timeLeftSeconds}
+                                    onReserve={() => handleReserveSeat(seat.seat_index)}
                                 />
                             </div>
                         )
@@ -257,7 +410,13 @@ export function GameClient({
                                 </div>
                             )}
                         <div className="absolute left-1/2 top-[52%] w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px]">
-                            {tableState && <BoardPot table={tableState} />}
+                            {tableState && (
+                                <BoardPot
+                                    table={tableState}
+                                    canStart={canStartHand}
+                                    onStart={handleStartHand}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>
@@ -273,6 +432,7 @@ export function GameClient({
                             table={tableState}
                             playerId={player.player_id}
                             onAction={handleAction}
+                            forceAllFold={forceAllFold}
                         />
                     </div>
                 </div>

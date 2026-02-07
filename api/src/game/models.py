@@ -81,3 +81,9 @@ class ActionPayload(BaseModel):
     action: ActionType
     amount: Optional[int] = None
 
+
+class ReserveSeatPayload(BaseModel):
+    player_id: str
+    name: str
+    seat_index: int
+

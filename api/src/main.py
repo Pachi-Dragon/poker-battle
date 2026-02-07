@@ -1,3 +1,4 @@
+import asyncio
 import os
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +8,7 @@ from google.auth.transport import requests
 from dotenv import load_dotenv
 
 from .game.manager import ConnectionManager, GameTable
-from .game.models import ActionPayload, JoinTablePayload, Street
+from .game.models import ActionPayload, JoinTablePayload, ReserveSeatPayload, Street
 
 # .envファイルを読み込む
 load_dotenv()
@@ -15,6 +16,9 @@ load_dotenv()
 app = FastAPI()
 manager = ConnectionManager()
 table = GameTable(table_id="default")
+HAND_DELAY_SECONDS = 1.0
+LEAVE_GRACE_SECONDS = 30.0
+pending_leave_tasks: dict[str, asyncio.Task] = {}
 
 # Next.js(フロントエンド)からのアクセスを許可
 app.add_middleware(
@@ -75,6 +79,35 @@ async def websocket_game(websocket: WebSocket):
         websocket,
         {"type": "tableState", "payload": table.to_state().model_dump()},
     )
+
+    async def cancel_pending_leave(player_id: str) -> None:
+        task = pending_leave_tasks.pop(player_id, None)
+        if task:
+            task.cancel()
+
+    async def schedule_leave(player_id: str) -> None:
+        await cancel_pending_leave(player_id)
+
+        async def delayed_leave() -> None:
+            await asyncio.sleep(LEAVE_GRACE_SECONDS)
+            if manager.has_player(player_id):
+                return
+            table.leave_player(player_id)
+            await manager.broadcast(
+                table_id,
+                {"type": "tableState", "payload": table.to_state().model_dump()},
+            )
+
+        pending_leave_tasks[player_id] = asyncio.create_task(delayed_leave())
+
+    async def start_hand_with_delay() -> None:
+        await asyncio.sleep(HAND_DELAY_SECONDS)
+        table.start_new_hand()
+        await manager.broadcast(
+            table_id,
+            {"type": "handState", "payload": table.to_state().model_dump()},
+        )
+
     try:
         while True:
             message = await websocket.receive_json()
@@ -83,29 +116,23 @@ async def websocket_game(websocket: WebSocket):
 
             if message_type == "joinTable":
                 data = JoinTablePayload(**payload)
-                table.join_player(data.player_id, data.name)
                 manager.set_player(websocket, data.player_id)
+                await cancel_pending_leave(data.player_id)
+                existing = table.find_seat(data.player_id)
+                if existing:
+                    table.join_player(data.player_id, data.name)
+                elif table.street in (Street.preflop, Street.flop, Street.turn, Street.river):
+                    # hand in progress: wait for seat reservation
+                    pass
+                else:
+                    table.join_player(data.player_id, data.name)
                 await manager.broadcast(
                     table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
                 )
-                # 2人以上参加かつ待機中なら自動でハンド開始
-                if (
-                    len([s for s in table.seats if s.player_id]) >= 2
-                    and table.street == Street.waiting
-                ):
-                    table.start_new_hand()
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "handState", "payload": table.to_state().model_dump()},
-                    )
             elif message_type == "leaveTable":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
-                    table.leave_player(player_id)
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "tableState", "payload": table.to_state().model_dump()},
-                    )
+                    await schedule_leave(player_id)
             elif message_type == "action":
                 data = ActionPayload(**payload)
                 table.record_action(data)
@@ -122,16 +149,29 @@ async def websocket_game(websocket: WebSocket):
                     table.street == Street.settlement
                     and len([s for s in table.seats if s.player_id]) >= 2
                 ):
-                    table.start_new_hand()
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "handState", "payload": table.to_state().model_dump()},
-                    )
+                    await start_hand_with_delay()
             elif message_type == "syncState":
                 await manager.send(
                     websocket,
                     {"type": "tableState", "payload": table.to_state().model_dump()},
                 )
+            elif message_type == "reserveSeat":
+                data = ReserveSeatPayload(**payload)
+                table.reserve_seat(data.player_id, data.name, data.seat_index)
+                await manager.broadcast(
+                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                )
+            elif message_type == "resetTable":
+                table.reset()
+                await manager.broadcast(
+                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                )
+            elif message_type == "startHand":
+                if (
+                    table.street == Street.waiting
+                    and len([s for s in table.seats if s.player_id]) >= 2
+                ):
+                    await start_hand_with_delay()
             else:
                 await manager.send(
                     websocket,
@@ -140,11 +180,7 @@ async def websocket_game(websocket: WebSocket):
     except WebSocketDisconnect:
         player_id = manager.get_player(websocket)
         if player_id:
-            table.leave_player(player_id)
-            await manager.broadcast(
-                table_id,
-                {"type": "tableState", "payload": table.to_state().model_dump()},
-            )
+            await schedule_leave(player_id)
         manager.disconnect(websocket)
     except Exception as exc:
         await manager.send(

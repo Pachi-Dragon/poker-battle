@@ -61,6 +61,12 @@ export interface ActionPayload {
     amount?: number
 }
 
+export interface ReserveSeatPayload {
+    player_id: string
+    name: string
+    seat_index: number
+}
+
 export interface GameMessage<T = unknown> {
     type: string
     payload?: T

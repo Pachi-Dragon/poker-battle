@@ -50,3 +50,21 @@
 .chip-to-pot {
   animation: chip-to-pot 650ms ease-in forwards;
 }
+
+@keyframes board-card-drop {
+  0% {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.board-card-drop {
+  animation: board-card-drop 280ms ease-out;
+}

@@ -8,6 +8,7 @@ interface ActionControlsProps {
     playerId: string
     onAction: (payload: ActionPayload) => void
     className?: string
+    forceAllFold?: boolean
 }
 
 function getActionButtonClass(action: ActionType) {
@@ -54,10 +55,12 @@ export function ActionControls({
     playerId,
     onAction,
     className = "",
+    forceAllFold = false,
 }: ActionControlsProps) {
     const [betSize, setBetSize] = useState(3)
     const [allFoldEnabled, setAllFoldEnabled] = useState(false)
     const [allFoldCheckedThisStreet, setAllFoldCheckedThisStreet] = useState(false)
+    const forcedByTimerRef = useRef(false)
     const lastAutoActionRef = useRef<string | null>(null)
     const prevStreetRef = useRef<TableState["street"] | null>(table?.street ?? null)
     const isTurn = useMemo(() => {
@@ -93,6 +96,15 @@ export function ActionControls({
         : 3
     const sliderMax = table && seat ? seat.stack + seat.street_commit : 60
     const sliderMin = Math.min(rawMin, sliderMax)
+    const foldBlocked = Boolean(isTurn && table && toCall === 0)
+    const showAllFoldToggle = Boolean(
+        table &&
+            seat &&
+            !seat.is_folded &&
+            !isTurn &&
+            table.current_turn_seat !== null &&
+            ["preflop", "flop", "turn", "river"].includes(table.street)
+    )
 
     const effectiveBetSize = useMemo(
         () => clamp(betSize, sliderMin, sliderMax),
@@ -100,8 +112,8 @@ export function ActionControls({
     )
 
     useEffect(() => {
-        setBetSize((prev) => clamp(prev, sliderMin, sliderMax))
-    }, [sliderMin, sliderMax])
+        setBetSize(sliderMin)
+    }, [sliderMin])
 
     const adjustBet = (delta: number) => {
         setBetSize((prev) => clamp(prev + delta, sliderMin, sliderMax))
@@ -146,6 +158,18 @@ export function ActionControls({
         }
         prevStreetRef.current = currentStreet
     }, [table?.street, allFoldCheckedThisStreet])
+
+    useEffect(() => {
+        if (forceAllFold) {
+            forcedByTimerRef.current = true
+            setAllFoldEnabled(true)
+            return
+        }
+        if (forcedByTimerRef.current) {
+            setAllFoldEnabled(false)
+            forcedByTimerRef.current = false
+        }
+    }, [forceAllFold])
 
     useEffect(() => {
         if (!allFoldEnabled || !isTurn || !table) return
@@ -237,31 +261,43 @@ export function ActionControls({
                             —
                         </div>
                     )}
-                    <button
-                        type="button"
-                        className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${!isTurn && allFoldEnabled
-                            ? "bg-sky-300/60 hover:bg-sky-300/70"
-                            : "bg-sky-500/80 hover:bg-sky-500"
+                    {isTurn ? (
+                        <button
+                            type="button"
+                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${
+                                foldBlocked
+                                    ? "bg-sky-300/50 text-white/70"
+                                    : "bg-sky-500/80 hover:bg-sky-500"
                             }`}
-                        onClick={() => {
-                            if (isTurn) {
+                            onClick={() => {
+                                if (foldBlocked) return
                                 onAction({
                                     player_id: playerId,
                                     action: "fold",
                                     amount: undefined,
                                 })
-                                return
-                            }
-                            setAllFoldEnabled((prev) => !prev)
-                        }}
-                        disabled={!table || !playerId}
-                    >
-                        {isTurn
-                            ? "Fold"
-                            : allFoldEnabled
-                                ? "All Fold ON"
-                                : "All Fold OFF"}
-                    </button>
+                            }}
+                            disabled={!table || !playerId || foldBlocked || forceAllFold}
+                        >
+                            Fold
+                        </button>
+                    ) : showAllFoldToggle ? (
+                        <button
+                            type="button"
+                            className="rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                            onClick={() => {
+                                if (forceAllFold) return
+                                setAllFoldEnabled((prev) => !prev)
+                            }}
+                            disabled={!table || !playerId || forceAllFold}
+                        >
+                            {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
+                        </button>
+                    ) : (
+                        <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
+                            —
+                        </div>
+                    )}
                 </div>
                 {/* 自分のターン時のみ: 微調整ボタンとベットサイズバー */}
                 {isTurn && (
@@ -304,7 +340,7 @@ export function ActionControls({
             </div>
             {table?.street === "waiting" && (
                 <p className="text-[10px] text-white/50">
-                    2人以上参加で自動的にハンドが始まります。
+                    2人以上参加で中央のボタンから開始できます。
                 </p>
             )}
         </div>
