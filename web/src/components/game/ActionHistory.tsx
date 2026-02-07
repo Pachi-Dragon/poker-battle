@@ -3,12 +3,22 @@ import { ActionRecord } from "@/lib/game/types"
 interface ActionHistoryProps {
     actions: ActionRecord[]
     className?: string
+    maxHeight?: number | null
 }
 
-export function ActionHistory({ actions, className = "" }: ActionHistoryProps) {
+export function ActionHistory({
+    actions,
+    className = "",
+    maxHeight,
+}: ActionHistoryProps) {
     return (
         <div
-            className={`h-full min-h-0 overflow-y-auto rounded-2xl border border-white/20 bg-white/10 p-4 text-xs text-white ${className}`}
+            className={`min-h-0 overflow-y-auto rounded-2xl border border-white/20 bg-white/10 p-4 text-xs text-white ${className}`}
+            style={
+                maxHeight
+                    ? { height: `${maxHeight}px`, maxHeight: `${maxHeight}px` }
+                    : undefined
+            }
         >
             <div className="mb-2 text-xs uppercase tracking-widest text-white/60">
                 Action History

@@ -29,7 +29,11 @@ export function GameClient({
     const router = useRouter()
     const [tableState, setTableState] = useState<TableState | null>(null)
     const socketRef = useRef<WebSocket | null>(null)
+    const actionControlsRef = useRef<HTMLDivElement | null>(null)
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+    const [actionControlsHeight, setActionControlsHeight] = useState<number | null>(
+        null
+    )
 
     useEffect(() => {
         const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
@@ -55,6 +59,18 @@ export function GameClient({
             socket.close()
         }
     }, [apiUrl, player.player_id, player.name])
+
+    useEffect(() => {
+        const element = actionControlsRef.current
+        if (!element) return
+        const updateHeight = () => {
+            setActionControlsHeight(element.getBoundingClientRect().height)
+        }
+        updateHeight()
+        const observer = new ResizeObserver(() => updateHeight())
+        observer.observe(element)
+        return () => observer.disconnect()
+    }, [])
 
     const heroSeat = useMemo(() => {
         if (!tableState) return null
@@ -170,13 +186,15 @@ export function GameClient({
                     <ActionHistory
                         actions={tableState?.action_history ?? []}
                         className="min-w-0 min-h-0"
+                        maxHeight={actionControlsHeight}
                     />
-                    <ActionControls
-                        table={tableState}
-                        playerId={player.player_id}
-                        onAction={handleAction}
-                        className="shrink-0"
-                    />
+                    <div ref={actionControlsRef} className="shrink-0 self-start">
+                        <ActionControls
+                            table={tableState}
+                            playerId={player.player_id}
+                            onAction={handleAction}
+                        />
+                    </div>
                 </div>
             </main>
         </div>

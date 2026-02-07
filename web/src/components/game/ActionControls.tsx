@@ -161,11 +161,11 @@ export function ActionControls({
     }, [allFoldEnabled, isTurn, table, toCall, playerId, onAction])
 
     return (
-        <div className={`rounded-2xl border border-white/20 bg-white/10 p-4 text-white flex flex-col gap-2 ${className}`}>
+        <div className={`rounded-2xl border border-white/20 bg-white/10 px-4 pt-4 pb-2 text-white flex flex-col gap-2 ${className}`}>
             <div
                 className={`flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-2 h-[3.33rem] ${isTurn && (canBet || canRaise)
-                        ? ""
-                        : "invisible pointer-events-none"
+                    ? ""
+                    : "invisible pointer-events-none"
                     }`}
             >
                 {(canBet
@@ -240,8 +240,8 @@ export function ActionControls({
                     <button
                         type="button"
                         className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${!isTurn && allFoldEnabled
-                                ? "bg-sky-300/60 hover:bg-sky-300/70"
-                                : "bg-sky-500/80 hover:bg-sky-500"
+                            ? "bg-sky-300/60 hover:bg-sky-300/70"
+                            : "bg-sky-500/80 hover:bg-sky-500"
                             }`}
                         onClick={() => {
                             if (isTurn) {
