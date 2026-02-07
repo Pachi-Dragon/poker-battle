@@ -28,6 +28,10 @@ export function GameClient({
 }: GameClientProps) {
     const router = useRouter()
     const [tableState, setTableState] = useState<TableState | null>(null)
+    const tableStateRef = useRef<TableState | null>(null)
+    const transitionTimeoutRef = useRef<number | null>(null)
+    const pendingStateRef = useRef<TableState | null>(null)
+    const isAnimatingRef = useRef(false)
     const socketRef = useRef<WebSocket | null>(null)
     const actionControlsRef = useRef<HTMLDivElement | null>(null)
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
@@ -51,7 +55,56 @@ export function GameClient({
         socket.addEventListener("message", (event) => {
             const message: GameMessage<TableState> = JSON.parse(event.data)
             if (message.type === "tableState" || message.type === "handState") {
-                setTableState(message.payload ?? null)
+                const nextState = message.payload ?? null
+                if (!nextState) {
+                    setTableState(null)
+                    return
+                }
+                const prevState = tableStateRef.current
+                if (!prevState) {
+                    setTableState(nextState)
+                    return
+                }
+                if (isAnimatingRef.current) {
+                    pendingStateRef.current = nextState
+                    return
+                }
+                const lastAction =
+                    nextState.action_history[nextState.action_history.length - 1]
+                        ?.action ?? ""
+                const prevCommitTotal = prevState.seats.reduce(
+                    (sum, seat) => sum + (seat.street_commit ?? 0),
+                    0
+                )
+                const shouldAnimateToPot =
+                    prevState.street !== nextState.street &&
+                    prevCommitTotal > 0 &&
+                    lastAction.toLowerCase() === "call"
+                if (shouldAnimateToPot) {
+                    const transitionState: TableState = {
+                        ...prevState,
+                        pot: nextState.pot,
+                        current_bet: nextState.current_bet,
+                        seats: prevState.seats.map((seat) => ({
+                            ...seat,
+                            street_commit: 0,
+                        })),
+                    }
+                    isAnimatingRef.current = true
+                    pendingStateRef.current = nextState
+                    setTableState(transitionState)
+                    if (transitionTimeoutRef.current) {
+                        window.clearTimeout(transitionTimeoutRef.current)
+                    }
+                    transitionTimeoutRef.current = window.setTimeout(() => {
+                        isAnimatingRef.current = false
+                        const pending = pendingStateRef.current
+                        pendingStateRef.current = null
+                        setTableState(pending ?? nextState)
+                    }, 650)
+                    return
+                }
+                setTableState(nextState)
             }
         })
 
@@ -59,6 +112,18 @@ export function GameClient({
             socket.close()
         }
     }, [apiUrl, player.player_id, player.name])
+
+    useEffect(() => {
+        tableStateRef.current = tableState
+    }, [tableState])
+
+    useEffect(() => {
+        return () => {
+            if (transitionTimeoutRef.current) {
+                window.clearTimeout(transitionTimeoutRef.current)
+            }
+        }
+    }, [])
 
     useEffect(() => {
         const element = actionControlsRef.current
@@ -101,12 +166,12 @@ export function GameClient({
     }
 
     const seatPositions = [
-        "top-0 left-1/2 -translate-x-1/2",
-        "top-1/4 right-0 -translate-y-1/2",
-        "bottom-1/4 right-0 translate-y-1/2",
-        "bottom-0 left-1/2 -translate-x-1/2",
-        "bottom-1/4 left-0 translate-y-1/2",
-        "top-1/4 left-0 -translate-y-1/2",
+        "top-1 left-1/2 -translate-x-1/2",
+        "top-[18%] right-2 -translate-y-1/2",
+        "bottom-[18%] right-2 translate-y-1/2",
+        "bottom-1 left-1/2 -translate-x-1/2",
+        "bottom-[18%] left-2 translate-y-1/2",
+        "top-[18%] left-2 -translate-y-1/2",
     ]
 
     const getSeatPosition = (seatIndex: number) => {
@@ -114,6 +179,15 @@ export function GameClient({
         const posIndex = (seatIndex - heroIndex + 3 + 6) % 6
         return seatPositions[posIndex]
     }
+
+    const chipVectors = [
+        { x: "0rem", y: "6rem" },
+        { x: "-6rem", y: "5rem" },
+        { x: "-6rem", y: "-5rem" },
+        { x: "0rem", y: "-6rem" },
+        { x: "6rem", y: "-5rem" },
+        { x: "6rem", y: "5rem" },
+    ]
 
     return (
         <div
@@ -133,16 +207,8 @@ export function GameClient({
                     >
                         離席
                     </button>
-                    {!embeddedInHome && (
-                        <h1 className="text-[clamp(0.7rem,3.5vw,0.9rem)] font-bold text-white whitespace-nowrap overflow-hidden text-ellipsis">
-                            Dragons Poker Online
-                        </h1>
-                    )}
                 </div>
                 <div className="flex items-center justify-between">
-                    <p className="text-xs text-white/60 truncate min-w-0">
-                        Table: default ・ You: {player.name}
-                    </p>
                     <div className="rounded-full bg-white/10 px-3 py-1.5 text-[10px] text-white/70 shrink-0 ml-2">
                         {tableState
                             ? `SB/BB ${tableState.small_blind}/${tableState.big_blind}`
@@ -160,23 +226,37 @@ export function GameClient({
             >
                 <div className="relative mx-auto mt-2 w-full max-w-sm flex-1 sm:max-w-md">
                     <div className="absolute inset-6 rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
-                    <div className="relative mx-auto aspect-square w-full">
-                        {tableState?.seats.map((seat) => (
+                    <div className="relative mx-auto aspect-[4/5] w-full">
+                        {tableState?.seats.map((seat) => {
+                            const heroIndex = heroSeat?.seat_index ?? 0
+                            const posIndex =
+                                (seat.seat_index - heroIndex + 3 + 6) % 6
+                            const isTopSeat =
+                                posIndex === 0 || posIndex === 1 || posIndex === 5
+                            const chipVector = chipVectors[posIndex]
+                            return (
                             <div
                                 key={seat.seat_index}
-                                className={`absolute w-24 sm:w-28 ${getSeatPosition(seat.seat_index)}`}
+                                className={`absolute w-28 sm:w-32 ${getSeatPosition(seat.seat_index)}`}
                             >
                                 <SeatCard
                                     seat={seat}
                                     isHero={heroSeat?.seat_index === seat.seat_index}
+                                    isCurrentTurn={
+                                        tableState?.current_turn_seat === seat.seat_index
+                                    }
+                                    isTopSeat={isTopSeat}
+                                    chipToX={chipVector.x}
+                                    chipToY={chipVector.y}
                                 />
                             </div>
-                        )) ?? (
+                        )
+                        }) ?? (
                                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
                                     Loading seats...
                                 </div>
                             )}
-                        <div className="absolute left-1/2 top-1/2 w-[85%] max-w-[320px] -translate-x-1/2 -translate-y-1/2 min-w-[200px]">
+                        <div className="absolute left-1/2 top-[52%] w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px]">
                             {tableState && <BoardPot table={tableState} />}
                         </div>
                     </div>

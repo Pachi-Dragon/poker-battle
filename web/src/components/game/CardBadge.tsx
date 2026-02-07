@@ -5,9 +5,9 @@ interface CardBadgeProps {
 
 const suitColors: Record<string, string> = {
     "♠": "bg-black",
-    "♥": "bg-red-500",
-    "♦": "bg-sky-500",   // Fold と同じ色
-    "♣": "bg-emerald-500", // Check と同じ色
+    "♥": "bg-red-700",
+    "♦": "bg-sky-700",   // Fold と同じ色
+    "♣": "bg-emerald-700", // Check と同じ色
 }
 
 function getSuitColor(card: string) {
@@ -18,7 +18,7 @@ function getSuitColor(card: string) {
 export function CardBadge({ card, className = "" }: CardBadgeProps) {
     return (
         <span
-            className={`inline-flex min-w-8 items-center justify-center rounded px-2 py-1 text-xs font-semibold text-white ${getSuitColor(
+            className={`inline-flex min-w-10 items-center justify-center rounded border border-white/80 px-2.5 py-1.5 text-sm font-semibold text-white ${getSuitColor(
                 card
             )} ${className}`}
         >

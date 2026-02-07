@@ -32,3 +32,21 @@
   cursor: pointer;
   border: none;
 }
+
+@keyframes chip-to-pot {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(var(--chip-to-x, 0), var(--chip-to-y, 0)) scale(0.2);
+    opacity: 0;
+  }
+}
+
+.chip-to-pot {
+  animation: chip-to-pot 650ms ease-in forwards;
+}
