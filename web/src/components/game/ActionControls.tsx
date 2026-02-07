@@ -12,34 +12,39 @@ interface ActionControlsProps {
     onReset: () => void
 }
 
-const actionButtons: { label: string; action: ActionType }[] = [
-    { label: "Fold", action: "fold" },
-    { label: "Check", action: "check" },
-    { label: "Call", action: "call" },
-    { label: "Bet", action: "bet" },
-    { label: "Raise", action: "raise" },
-    { label: "All-In", action: "all-in" },
-]
-
-function getButtonLabel(
-    action: ActionType,
-    label: string,
-    opts: {
-        isTurn: boolean
-        toCall: number
-        betSize: number
-        canCall: boolean
-        canBet: boolean
-        canRaise: boolean
-        canAllIn: boolean
+function getActionButtonClass(action: ActionType) {
+    if (action === "fold") {
+        return "bg-sky-500/80 hover:bg-sky-500"
     }
-): string {
-    if (!opts.isTurn) return label
-    if (action === "call" && opts.canCall) return `Call ${opts.toCall}`
-    if (action === "bet" && opts.canBet) return `Bet ${opts.betSize}`
-    if (action === "raise" && opts.canRaise) return `Raise to ${opts.betSize}`
-    if (action === "all-in" && opts.canAllIn) return `All-in ${opts.betSize}`
-    return label
+    if (action === "check" || action === "call") {
+        return "bg-emerald-500/80 hover:bg-emerald-500"
+    }
+    return "bg-red-500/80 hover:bg-red-500"
+}
+
+function getCheckCallButton(opts: {
+    canCheck: boolean
+    canCall: boolean
+    toCall: number
+}): { label: string; action: ActionType } | null {
+    if (opts.canCheck) return { label: "Check", action: "check" }
+    if (opts.canCall) return { label: `Call ${opts.toCall}`, action: "call" }
+    return null
+}
+
+function getBetRaiseAllInButton(opts: {
+    canBet: boolean
+    canRaise: boolean
+    canAllIn: boolean
+    betSize: number
+    allInSize: number
+}): { label: string; action: ActionType } | null {
+    if (!opts.canAllIn) return null
+    if (opts.betSize >= opts.allInSize)
+        return { label: `All-in ${opts.allInSize}`, action: "all-in" }
+    if (opts.canBet) return { label: `Bet ${opts.betSize}`, action: "bet" }
+    if (opts.canRaise) return { label: `Raise ${opts.betSize}`, action: "raise" }
+    return { label: `All-in ${opts.allInSize}`, action: "all-in" }
 }
 
 export function ActionControls({
@@ -121,52 +126,78 @@ export function ActionControls({
                 Actions
             </div>
             <div className="grid grid-cols-2 gap-2">
-                {actionButtons.map((button) => {
-                    const isAmountAction =
-                        button.action === "bet" || button.action === "raise" || button.action === "all-in"
-                    const disabledByAmount = isAmountAction && !isBetSizeValid
-                    return (
-                        <button
-                            key={button.action}
-                            type="button"
-                            className="rounded bg-emerald-500/80 px-3 py-2 text-sm font-semibold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-white/20"
-                            onClick={() =>
-                                isAmountAction
-                                    ? handleAmountAction(button.action)
-                                    : onAction({
-                                        player_id: playerId,
-                                        action: button.action,
-                                        amount: undefined,
-                                    })
-                            }
-                            disabled={
-                                !table ||
-                                !playerId ||
-                                !isTurn ||
-                                disabledByAmount ||
-                                (button.action === "check" && !canCheck) ||
-                                (button.action === "call" && !canCall) ||
-                                (button.action === "bet" && !canBet) ||
-                                (button.action === "raise" && !canRaise) ||
-                                (button.action === "all-in" && !canAllIn)
-                            }
-                        >
-                            {getButtonLabel(button.action, button.label, {
-                                isTurn,
-                                toCall,
-                                betSize: button.action === "all-in" ? (seat?.stack ?? 0) + (seat?.street_commit ?? 0) : effectiveBetSize,
-                                canCall,
+                <button
+                    type="button"
+                    className={`rounded px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 ${getActionButtonClass("fold")}`}
+                    onClick={() =>
+                        onAction({
+                            player_id: playerId,
+                            action: "fold",
+                            amount: undefined,
+                        })
+                    }
+                    disabled={!table || !playerId || !isTurn}
+                >
+                    Fold
+                </button>
+                {isTurn && getCheckCallButton({ canCheck, canCall, toCall }) && (
+                    <button
+                        type="button"
+                        className={`rounded px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 ${getActionButtonClass("check")}`}
+                        onClick={() => {
+                            const btn = getCheckCallButton({ canCheck, canCall, toCall })
+                            if (btn)
+                                onAction({
+                                    player_id: playerId,
+                                    action: btn.action,
+                                    amount: undefined,
+                                })
+                        }}
+                        disabled={!table || !playerId || !isTurn}
+                    >
+                        {getCheckCallButton({ canCheck, canCall, toCall })?.label}
+                    </button>
+                )}
+                {isTurn && getBetRaiseAllInButton({
+                    canBet,
+                    canRaise,
+                    canAllIn,
+                    betSize: effectiveBetSize,
+                    allInSize: (seat?.stack ?? 0) + (seat?.street_commit ?? 0),
+                }) && (
+                    <button
+                        type="button"
+                        className={`rounded px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 ${getActionButtonClass("bet")}`}
+                        onClick={() => {
+                            const btn = getBetRaiseAllInButton({
                                 canBet,
                                 canRaise,
                                 canAllIn,
-                            })}
-                        </button>
-                    )
-                })}
+                                betSize: effectiveBetSize,
+                                allInSize: (seat?.stack ?? 0) + (seat?.street_commit ?? 0),
+                            })
+                            if (btn) handleAmountAction(btn.action)
+                        }}
+                        disabled={
+                            !table ||
+                            !playerId ||
+                            !isTurn ||
+                            !isBetSizeValid
+                        }
+                    >
+                        {getBetRaiseAllInButton({
+                            canBet,
+                            canRaise,
+                            canAllIn,
+                            betSize: effectiveBetSize,
+                            allInSize: (seat?.stack ?? 0) + (seat?.street_commit ?? 0),
+                        })?.label}
+                    </button>
+                )}
             </div>
             <div className="mt-4">
                 <label className="text-xs text-white/60">
-                    {table?.current_bet === 0 ? "Bet" : "Raise To"}: {effectiveBetSize}
+                    {table?.current_bet === 0 ? "Bet" : "Raise"}: {effectiveBetSize}
                 </label>
                 <input
                     type="number"

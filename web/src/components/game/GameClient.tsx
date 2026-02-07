@@ -87,9 +87,24 @@ export function GameClient({ player }: GameClientProps) {
         )
     }
 
+    const seatPositions = [
+        "top-0 left-1/2 -translate-x-1/2",
+        "top-1/4 right-0 -translate-y-1/2",
+        "bottom-1/4 right-0 translate-y-1/2",
+        "bottom-0 left-1/2 -translate-x-1/2",
+        "bottom-1/4 left-0 translate-y-1/2",
+        "top-1/4 left-0 -translate-y-1/2",
+    ]
+
+    const getSeatPosition = (seatIndex: number) => {
+        const heroIndex = heroSeat?.seat_index ?? 0
+        const posIndex = (seatIndex - heroIndex + 3 + 6) % 6
+        return seatPositions[posIndex]
+    }
+
     return (
-        <div className="grid min-h-screen grid-rows-[auto_1fr] bg-emerald-950 px-6 py-8 text-white">
-            <header className="mb-6 flex items-center justify-between">
+        <div className="min-h-screen bg-emerald-950 text-white">
+            <header className="flex items-center justify-between px-4 pb-3 pt-4">
                 <div>
                     <p className="text-sm text-white/60">
                         Table: default ・ You: {player.name}
@@ -102,26 +117,36 @@ export function GameClient({ player }: GameClientProps) {
                 </div>
             </header>
 
-            <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-                <div className="flex flex-col gap-6">
-                    <div className="grid gap-4 md:grid-cols-3">
+            <main className="flex min-h-[calc(100vh-64px)] flex-col px-4 pb-4">
+                <div className="relative mx-auto mt-2 w-full max-w-sm flex-1 sm:max-w-md">
+                    <div className="absolute inset-6 rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
+                    <div className="relative mx-auto aspect-square w-full">
                         {tableState?.seats.map((seat) => (
-                            <SeatCard
+                            <div
                                 key={seat.seat_index}
-                                seat={seat}
-                                isHero={heroSeat?.seat_index === seat.seat_index}
-                            />
+                                className={`absolute w-24 sm:w-28 ${getSeatPosition(seat.seat_index)}`}
+                            >
+                                <SeatCard
+                                    seat={seat}
+                                    isHero={heroSeat?.seat_index === seat.seat_index}
+                                />
+                            </div>
                         )) ?? (
-                                <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
-                                    Loading seats...
-                                </div>
-                            )}
+                            <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
+                                Loading seats...
+                            </div>
+                        )}
+                        <div className="absolute left-1/2 top-1/2 w-40 -translate-x-1/2 -translate-y-1/2 sm:w-48">
+                            {tableState && <BoardPot table={tableState} />}
+                        </div>
                     </div>
-                    {tableState && <BoardPot table={tableState} />}
                 </div>
 
-                <div className="flex flex-col gap-6">
-                    <ActionHistory actions={tableState?.action_history ?? []} />
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                    <ActionHistory
+                        actions={tableState?.action_history ?? []}
+                        className="h-40 sm:h-48"
+                    />
                     <ActionControls
                         table={tableState}
                         playerId={player.player_id}
@@ -131,7 +156,7 @@ export function GameClient({ player }: GameClientProps) {
                         onReset={handleReset}
                     />
                 </div>
-            </div>
+            </main>
         </div>
     )
 }

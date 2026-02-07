@@ -1,4 +1,5 @@
 import { TableState } from "@/lib/game/types"
+import { CardBadge } from "./CardBadge"
 
 interface BoardPotProps {
     table: TableState
@@ -13,12 +14,7 @@ export function BoardPot({ table }: BoardPotProps) {
             <div className="mt-2 flex items-center justify-center gap-2">
                 {table.board.length > 0 ? (
                     table.board.map((card) => (
-                        <span
-                            key={card}
-                            className="rounded bg-black/30 px-2 py-1 text-sm"
-                        >
-                            {card}
-                        </span>
+                        <CardBadge key={card} card={card} className="text-sm" />
                     ))
                 ) : (
                     <span className="text-white/60">---</span>

@@ -1,4 +1,5 @@
 import { SeatState } from "@/lib/game/types"
+import { CardBadge } from "./CardBadge"
 
 interface SeatCardProps {
     seat: SeatState
@@ -20,14 +21,7 @@ export function SeatCard({ seat, isHero }: SeatCardProps) {
                 <span className="text-[10px] opacity-70">{seat.position}</span>
             </div>
             <div className="mt-1 text-white/80">
-                Stack: {occupied ? seat.stack : "-"}
-            </div>
-            <div className="mt-1 text-white/70">
-                {seat.is_folded
-                    ? "Status: Folded"
-                    : seat.is_all_in
-                      ? "Status: All-in"
-                      : "Status: Active"}
+                {occupied ? seat.stack : "-"}
             </div>
             {occupied && (
                 <div className="mt-1 text-white/60">
@@ -35,7 +29,16 @@ export function SeatCard({ seat, isHero }: SeatCardProps) {
                 </div>
             )}
             <div className="mt-1 text-white/70">
-                {seat.last_action ? `Action: ${seat.last_action}` : "Action: -"}
+                {seat.last_action ?? "-"}
+            </div>
+            <div className="mt-2 flex items-center gap-1">
+                {occupied && seat.hole_cards && seat.hole_cards.length > 0 ? (
+                    seat.hole_cards.map((card) => (
+                        <CardBadge key={card} card={card} />
+                    ))
+                ) : (
+                    <span className="text-white/60">---</span>
+                )}
             </div>
         </div>
     )

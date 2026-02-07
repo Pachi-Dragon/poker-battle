@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+import random
+from itertools import combinations
+from typing import Dict, List, Optional, Set, Tuple
 
 from fastapi import WebSocket
 
@@ -8,6 +10,83 @@ from .models import ActionPayload, ActionRecord, ActionType, SeatState, Street, 
 
 
 POSITIONS_6MAX = ["BTN", "SB", "BB", "UTG", "HJ", "CO"]
+
+RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"]
+SUITS = ["♠", "♥", "♦", "♣"]
+RANK_VALUE = {rank: 14 - index for index, rank in enumerate(RANKS)}
+RANK_ORDER = {rank: index for index, rank in enumerate(RANKS)}
+SUIT_ORDER = {suit: index for index, suit in enumerate(SUITS)}
+
+
+def _parse_card(card: str) -> Tuple[int, str]:
+    rank = card[:-1]
+    suit = card[-1]
+    return RANK_VALUE[rank], suit
+
+
+def _hand_rank_five(cards: List[str]) -> Tuple[int, List[int]]:
+    ranks = []
+    suits = []
+    for card in cards:
+        rank_value, suit = _parse_card(card)
+        ranks.append(rank_value)
+        suits.append(suit)
+    rank_counts: Dict[int, int] = {}
+    for rank_value in ranks:
+        rank_counts[rank_value] = rank_counts.get(rank_value, 0) + 1
+    counts = sorted(rank_counts.items(), key=lambda item: (-item[1], -item[0]))
+    is_flush = len(set(suits)) == 1
+    unique_ranks = sorted(set(ranks), reverse=True)
+    is_wheel = unique_ranks == [14, 5, 4, 3, 2]
+    is_straight = False
+    straight_high = 0
+    if len(unique_ranks) == 5:
+        if is_wheel:
+            is_straight = True
+            straight_high = 5
+        elif unique_ranks[0] - unique_ranks[-1] == 4:
+            is_straight = True
+            straight_high = unique_ranks[0]
+
+    if is_straight and is_flush:
+        return 8, [straight_high]
+    if counts[0][1] == 4:
+        four_rank = counts[0][0]
+        kicker = counts[1][0]
+        return 7, [four_rank, kicker]
+    if counts[0][1] == 3 and counts[1][1] == 2:
+        return 6, [counts[0][0], counts[1][0]]
+    if is_flush:
+        return 5, sorted(ranks, reverse=True)
+    if is_straight:
+        return 4, [straight_high]
+    if counts[0][1] == 3:
+        trips = counts[0][0]
+        kickers = [rank for rank in sorted(ranks, reverse=True) if rank != trips]
+        return 3, [trips] + kickers
+    if counts[0][1] == 2 and counts[1][1] == 2:
+        pair_high = max(counts[0][0], counts[1][0])
+        pair_low = min(counts[0][0], counts[1][0])
+        kicker = [
+            rank
+            for rank in sorted(ranks, reverse=True)
+            if rank not in [pair_high, pair_low]
+        ][0]
+        return 2, [pair_high, pair_low, kicker]
+    if counts[0][1] == 2:
+        pair_rank = counts[0][0]
+        kickers = [rank for rank in sorted(ranks, reverse=True) if rank != pair_rank]
+        return 1, [pair_rank] + kickers
+    return 0, sorted(ranks, reverse=True)
+
+
+def _best_hand_rank(cards: List[str]) -> Tuple[int, List[int]]:
+    best = (-1, [])
+    for combo in combinations(cards, 5):
+        rank = _hand_rank_five(list(combo))
+        if rank > best:
+            best = rank
+    return best
 
 
 class GameTable:
@@ -41,6 +120,7 @@ class GameTable:
         self.current_bet = 0
         self.min_raise = self.big_blind
         self.street_contribs: Dict[int, int] = {index: 0 for index in range(max_players)}
+        self.hand_contribs: Dict[int, int] = {index: 0 for index in range(max_players)}
         self.folded_seats: Set[int] = set()
         self.all_in_seats: Set[int] = set()
         self.acted_seats: Set[int] = set()
@@ -96,6 +176,126 @@ class GameTable:
         self.street_contribs = {index: 0 for index in range(self.max_players)}
         self.acted_seats = set()
         self.raise_blocked_seats = set()
+
+    def _reset_hand_state(self) -> None:
+        self.pot = 0
+        self.board = []
+        self.action_history = []
+        self.folded_seats = set()
+        self.all_in_seats = set()
+        self.hand_contribs = {index: 0 for index in range(self.max_players)}
+        self._reset_street_state()
+
+    def _build_deck(self) -> List[str]:
+        deck = [f"{rank}{suit}" for suit in SUITS for rank in RANKS]
+        random.shuffle(deck)
+        return deck
+
+    def _sort_hole_cards(self, cards: List[str]) -> List[str]:
+        def sort_key(card: str) -> Tuple[int, int]:
+            rank = card[:-1]
+            suit = card[-1]
+            return RANK_ORDER[rank], SUIT_ORDER[suit]
+
+        return sorted(cards, key=sort_key)
+
+    def _deal_hole_cards(self, deck: List[str]) -> None:
+        for seat_index in self._occupied_seat_indices():
+            cards = [deck.pop(), deck.pop()]
+            self.seats[seat_index].hole_cards = self._sort_hole_cards(cards)
+
+    def _deal_board(self, deck: List[str]) -> None:
+        self.board = [deck.pop() for _ in range(5)]
+
+    def _visible_board(self) -> List[str]:
+        if self.street == Street.flop:
+            return self.board[:3]
+        if self.street == Street.turn:
+            return self.board[:4]
+        if self.street in (Street.river, Street.showdown, Street.settlement):
+            return self.board[:5]
+        return []
+
+    def _dealer_order(self) -> List[int]:
+        order = []
+        for offset in range(self.max_players):
+            seat_index = (self.dealer_seat + offset) % self.max_players
+            order.append(seat_index)
+        return order
+
+    def _build_side_pots(self) -> List[Tuple[int, List[int]]]:
+        contributions = {
+            seat_index: amount
+            for seat_index, amount in self.hand_contribs.items()
+            if amount > 0
+        }
+        if not contributions:
+            return []
+        sorted_levels = sorted(set(contributions.values()))
+        remaining = set(contributions.keys())
+        pots: List[Tuple[int, List[int]]] = []
+        previous = 0
+        in_hand = set(self._in_hand_seat_indices())
+        for level in sorted_levels:
+            if not remaining:
+                break
+            pot_amount = (level - previous) * len(remaining)
+            eligible = [seat for seat in remaining if seat in in_hand]
+            pots.append((pot_amount, eligible))
+            previous = level
+            remaining = {seat for seat in remaining if contributions[seat] > level}
+        return pots
+
+    def _settle_pots(self) -> None:
+        in_hand = self._in_hand_seat_indices()
+        if len(in_hand) == 1:
+            winner = in_hand[0]
+            self.seats[winner].stack += self.pot
+            self.action_history.append(
+                ActionRecord(
+                    actor_id=self.seats[winner].player_id,
+                    actor_name=self.seats[winner].name,
+                    action="payout",
+                    amount=self.pot,
+                    street=self.street,
+                    detail="uncontested",
+                )
+            )
+            self.pot = 0
+            self.street = Street.settlement
+            return
+
+        ranks: Dict[int, Tuple[int, List[int]]] = {}
+        for seat_index in in_hand:
+            seat = self.seats[seat_index]
+            if seat.hole_cards:
+                ranks[seat_index] = _best_hand_rank(seat.hole_cards + self.board)
+        dealer_order = self._dealer_order()
+        for amount, eligible in self._build_side_pots():
+            if amount <= 0 or not eligible:
+                continue
+            best_rank = max(ranks[seat] for seat in eligible)
+            winners = [seat for seat in eligible if ranks[seat] == best_rank]
+            split = amount // len(winners)
+            remainder = amount % len(winners)
+            winners_sorted = sorted(winners, key=lambda seat: dealer_order.index(seat))
+            for seat_index in winners_sorted:
+                payout = split + (1 if remainder > 0 else 0)
+                if remainder > 0:
+                    remainder -= 1
+                self.seats[seat_index].stack += payout
+                self.action_history.append(
+                    ActionRecord(
+                        actor_id=self.seats[seat_index].player_id,
+                        actor_name=self.seats[seat_index].name,
+                        action="payout",
+                        amount=payout,
+                        street=self.street,
+                        detail="side_pot",
+                    )
+                )
+        self.pot = 0
+        self.street = Street.settlement
 
     def _find_seat(self, player_id: str) -> Optional[SeatState]:
         for seat in self.seats:
@@ -169,12 +369,7 @@ class GameTable:
         self.apply_auto_cashout()
         self.hand_number += 1
         self.street = Street.preflop
-        self.pot = 0
-        self.board = []
-        self.action_history = []
-        self.folded_seats = set()
-        self.all_in_seats = set()
-        self._reset_street_state()
+        self._reset_hand_state()
         for seat in self.seats:
             seat.last_action = None
             seat.hole_cards = None
@@ -189,6 +384,9 @@ class GameTable:
                 detail=f"hand:{self.hand_number}",
             )
         )
+        deck = self._build_deck()
+        self._deal_hole_cards(deck)
+        self._deal_board(deck)
         self._post_blinds()
 
     def reset(self) -> None:
@@ -202,12 +400,7 @@ class GameTable:
             seat.street_commit = 0
             seat.raise_blocked = False
         self.street = Street.waiting
-        self.pot = 0
-        self.board = []
-        self.action_history = []
-        self.folded_seats = set()
-        self.all_in_seats = set()
-        self._reset_street_state()
+        self._reset_hand_state()
 
     def _post_blinds(self) -> None:
         sb_index = self._next_occupied_seat(self.dealer_seat)
@@ -235,6 +428,7 @@ class GameTable:
             seat.is_all_in = True
         self.pot += actual
         self.street_contribs[seat_index] += actual
+        self.hand_contribs[seat_index] += actual
         seat.street_commit = self.street_contribs[seat_index]
         self.action_history.append(
             ActionRecord(
@@ -299,6 +493,7 @@ class GameTable:
             # 既にベット済みの分はstackから引かず、未払い分だけ引く
             seat.stack -= call_amount
             self.pot += call_amount
+            self.hand_contribs[seat.seat_index] += call_amount
             # table上の表示(commit)は実際のto_call分を表示する
             self.street_contribs[seat.seat_index] = player_commit + call_amount
             seat.street_commit = self.current_bet  # 画面上は(current_bet)を表示
@@ -317,6 +512,7 @@ class GameTable:
             seat.stack -= bet_amount
             self.pot += bet_amount
             self.street_contribs[seat.seat_index] += bet_amount
+            self.hand_contribs[seat.seat_index] += bet_amount
             seat.street_commit = self.street_contribs[seat.seat_index]
             if seat.stack == 0:
                 self.all_in_seats.add(seat.seat_index)
@@ -346,6 +542,7 @@ class GameTable:
             seat.stack -= add_amount
             self.pot += add_amount
             self.street_contribs[seat.seat_index] = new_total
+            self.hand_contribs[seat.seat_index] += add_amount
             seat.street_commit = new_total
             if seat.stack == 0:
                 self.all_in_seats.add(seat.seat_index)
@@ -373,8 +570,9 @@ class GameTable:
             previous_bet = self.current_bet
             required_total = previous_bet + self.min_raise
             prior_acted = set(self.acted_seats)
-            self.pot += all_in_amount - player_commit 
+            self.pot += all_in_amount - player_commit
             self.street_contribs[seat.seat_index] = all_in_amount
+            self.hand_contribs[seat.seat_index] += all_in_amount - player_commit
             self.all_in_seats.add(seat.seat_index)
             self.current_bet = max(self.current_bet, all_in_amount)
             seat.is_all_in = True
@@ -438,6 +636,7 @@ class GameTable:
             self.action_history.append(
                 ActionRecord(action="hand_end", street=self.street)
             )
+            self._settle_pots()
             return
         if self._street_complete():
             self._advance_street()
@@ -458,6 +657,7 @@ class GameTable:
             self.action_history.append(
                 ActionRecord(action="showdown", street=self.street)
             )
+            self._settle_pots()
             return
         else:
             self.street = Street.showdown
@@ -499,7 +699,7 @@ class GameTable:
             pot=self.pot,
             current_bet=self.current_bet,
             min_raise=self.min_raise,
-            board=self.board,
+            board=self._visible_board(),
             seats=seats,
             action_history=self.action_history,
             current_turn_seat=self.current_turn_seat,
