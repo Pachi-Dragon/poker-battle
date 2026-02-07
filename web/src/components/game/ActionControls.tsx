@@ -7,6 +7,7 @@ interface ActionControlsProps {
     table: TableState | null
     playerId: string
     onAction: (payload: ActionPayload) => void
+    className?: string
 }
 
 function getActionButtonClass(action: ActionType) {
@@ -52,6 +53,7 @@ export function ActionControls({
     table,
     playerId,
     onAction,
+    className = "",
 }: ActionControlsProps) {
     const [betSize, setBetSize] = useState(3)
     const [allFoldEnabled, setAllFoldEnabled] = useState(false)
@@ -159,27 +161,26 @@ export function ActionControls({
     }, [allFoldEnabled, isTurn, table, toCall, playerId, onAction])
 
     return (
-        <div className="rounded-2xl border border-white/20 bg-white/10 p-4 text-white flex flex-col gap-2">
+        <div className={`rounded-2xl border border-white/20 bg-white/10 p-4 text-white flex flex-col gap-2 ${className}`}>
             <div
-                className={`flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-2 h-[3.33rem] ${
-                    isTurn && (canBet || canRaise)
+                className={`flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-2 h-[3.33rem] ${isTurn && (canBet || canRaise)
                         ? ""
                         : "invisible pointer-events-none"
-                }`}
+                    }`}
             >
                 {(canBet
                     ? betQuickPercents.map((percent) => ({
-                          key: `${percent}`,
-                          label: `${percent}%`,
-                          onClick: () =>
-                              setBetTo((table?.pot ?? 0) * (percent / 100)),
-                      }))
+                        key: `${percent}`,
+                        label: `${percent}%`,
+                        onClick: () =>
+                            setBetTo((table?.pot ?? 0) * (percent / 100)),
+                    }))
                     : raiseQuickMultipliers.map((mult) => ({
-                          key: `${mult}`,
-                          label: `×${mult}`,
-                          onClick: () =>
-                              setBetTo((table?.current_bet ?? sliderMin) * mult),
-                      }))
+                        key: `${mult}`,
+                        label: `×${mult}`,
+                        onClick: () =>
+                            setBetTo((table?.current_bet ?? sliderMin) * mult),
+                    }))
                 ).map(({ key, label, onClick }) => (
                     <button
                         key={key}
@@ -218,7 +219,7 @@ export function ActionControls({
                     {checkCallBtn ? (
                         <button
                             type="button"
-                        className="rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center"
+                            className="rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center"
                             onClick={() => {
                                 if (checkCallBtn)
                                     onAction({
@@ -232,17 +233,16 @@ export function ActionControls({
                             {checkCallBtn.label}
                         </button>
                     ) : (
-                    <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
+                        <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
                             —
                         </div>
                     )}
                     <button
                         type="button"
-                        className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${
-                            !isTurn && allFoldEnabled
+                        className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${!isTurn && allFoldEnabled
                                 ? "bg-sky-300/60 hover:bg-sky-300/70"
                                 : "bg-sky-500/80 hover:bg-sky-500"
-                        }`}
+                            }`}
                         onClick={() => {
                             if (isTurn) {
                                 onAction({

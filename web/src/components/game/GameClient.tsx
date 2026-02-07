@@ -160,21 +160,22 @@ export function GameClient({
                                     Loading seats...
                                 </div>
                             )}
-                        <div className="absolute left-1/2 top-1/2 w-40 -translate-x-1/2 -translate-y-1/2 sm:w-48">
+                        <div className="absolute left-1/2 top-1/2 w-[85%] max-w-[320px] -translate-x-1/2 -translate-y-1/2 min-w-[200px]">
                             {tableState && <BoardPot table={tableState} />}
                         </div>
                     </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] gap-3">
+                <div className="mt-3 grid grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] gap-3 items-stretch">
                     <ActionHistory
                         actions={tableState?.action_history ?? []}
-                        className="h-full min-w-0"
+                        className="min-w-0 min-h-0"
                     />
                     <ActionControls
                         table={tableState}
                         playerId={player.player_id}
                         onAction={handleAction}
+                        className="shrink-0"
                     />
                 </div>
             </main>

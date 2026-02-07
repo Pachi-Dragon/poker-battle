@@ -5,27 +5,29 @@ interface BoardPotProps {
     table: TableState
 }
 
+/** 現在のストリートのベットを除いたポット（フェーズ開始時点のポット） */
+function potExcludingCurrentStreet(table: TableState): number {
+    const streetTotal = table.seats.reduce((sum, s) => sum + (s.street_commit ?? 0), 0)
+    return Math.max(0, table.pot - streetTotal)
+}
+
 export function BoardPot({ table }: BoardPotProps) {
+    const potAmount = potExcludingCurrentStreet(table)
+
     return (
-        <div className="rounded-2xl border border-white/20 bg-white/10 p-4 text-center text-white">
-            <div className="text-xs uppercase tracking-widest text-white/60">
-                Board
-            </div>
-            <div className="mt-2 flex items-center justify-center gap-2">
+        <div className="rounded-2xl border border-white/20 bg-white/10 px-5 py-3 text-center text-white flex flex-col items-center justify-center gap-2 min-w-0 w-full">
+            <div className="flex items-center justify-center gap-1.5 shrink-0">
                 {table.board.length > 0 ? (
                     table.board.map((card) => (
                         <CardBadge key={card} card={card} className="text-sm" />
                     ))
                 ) : (
-                    <span className="text-white/60">---</span>
+                    <span className="text-white/60 text-sm">---</span>
                 )}
             </div>
-            <div className="mt-4 text-xs uppercase tracking-widest text-white/60">
-                Pot
-            </div>
-            <div className="mt-1 text-lg font-semibold">{table.pot}</div>
-            <div className="mt-2 text-[10px] text-white/50">
-                Hand #{table.hand_number} ・ {table.street}
+            <div className="flex items-baseline justify-center gap-1.5 shrink-0">
+                <span className="text-[10px] uppercase tracking-wider text-white/60">Pot</span>
+                <span className="text-base font-semibold">{potAmount}</span>
             </div>
         </div>
     )

@@ -6,8 +6,8 @@ interface CardBadgeProps {
 const suitColors: Record<string, string> = {
     "♠": "bg-black",
     "♥": "bg-red-500",
-    "♦": "bg-sky-400",
-    "♣": "bg-emerald-400",
+    "♦": "bg-sky-500",   // Fold と同じ色
+    "♣": "bg-emerald-500", // Check と同じ色
 }
 
 function getSuitColor(card: string) {
