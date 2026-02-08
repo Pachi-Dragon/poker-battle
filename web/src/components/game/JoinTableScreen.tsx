@@ -32,13 +32,6 @@ export function JoinTableScreen({
 
     return (
         <div className="flex min-h-screen flex-col bg-emerald-950 text-white">
-            {/* ヘッダー: 全画面でタイトル表示 */}
-            <header className="shrink-0 px-4 pt-4 pb-2">
-                <h1 className="text-[clamp(0.75rem,4vw,0.95rem)] font-bold text-white text-center whitespace-nowrap overflow-hidden text-ellipsis">
-                    Dragons Poker Online
-                </h1>
-            </header>
-
             {/* メイン: おかえりなさい（名前入力） or ゲームテーブル */}
             <main className="flex-1 min-h-0 flex flex-col">
                 {player ? (

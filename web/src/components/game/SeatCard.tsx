@@ -31,6 +31,7 @@ export function SeatCard({
 }: SeatCardProps) {
     const cardDropAnimationMs = 420
     const occupied = Boolean(seat.player_id)
+    const isDisconnected = occupied && seat.is_connected === false
     const [animatedHoleIndices, setAnimatedHoleIndices] = useState<number[]>([])
     const prevHoleCountRef = useRef<number>(seat.hole_cards?.length ?? 0)
     const chipPositionClass = isTopSeat
@@ -105,14 +106,27 @@ export function SeatCard({
     return (
         <div className="flex flex-col items-stretch gap-1">
             <div
-                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${occupied ? "bg-slate-950" : "bg-slate-950/20"
-                    } ${occupied
+                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${
+                    occupied
+                        ? isDisconnected
+                            ? "bg-slate-800/90 text-white/60 border-white/10"
+                            : "bg-slate-950"
+                        : "bg-slate-950/20"
+                } ${
+                    occupied
                         ? isCurrentTurn
                             ? "border-yellow-400"
                             : "border-white/20"
                         : "border-white/30 border-dashed"
-                    }`}
+                }`}
             >
+                {isDisconnected && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-black/45">
+                        <span className="rounded-md bg-black/70 px-2 py-1 text-base font-semibold text-white">
+                            接続中
+                        </span>
+                    </div>
+                )}
                 {!occupied && canReserve && (
                     <button
                         type="button"

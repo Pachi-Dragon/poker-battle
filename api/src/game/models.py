@@ -38,6 +38,7 @@ class SeatState(BaseModel):
     position: Optional[str] = None
     last_action: Optional[str] = None
     hole_cards: Optional[List[str]] = None
+    is_connected: bool = True
     is_ready: bool = False
     is_folded: bool = False
     is_all_in: bool = False

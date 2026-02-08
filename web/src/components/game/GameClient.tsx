@@ -50,7 +50,6 @@ export function GameClient({
     }>({ hand: null, street: null })
     const streetTransitionDelayMs = 650
     const nextHandDelayMs = 5000
-    const foldRevealDelayMs = 1200
     const revealToGaugeDelayMs = 1000
     const socketRef = useRef<WebSocket | null>(null)
     const actionControlsRef = useRef<HTMLDivElement | null>(null)
@@ -77,7 +76,7 @@ export function GameClient({
     const nextHandDelayMsLeftRef = useRef(0)
     const nextHandDelayLastTickRef = useRef<number | null>(null)
     const [revealOpponents, setRevealOpponents] = useState(false)
-    const foldRevealTimeoutRef = useRef<number | null>(null)
+    const [revealByUser, setRevealByUser] = useState(false)
     const revealCompletedAtRef = useRef<number | null>(null)
     const nextHandStartTimeoutRef = useRef<number | null>(null)
     const frozenBlindsRef = useRef<{ sb: number; bb: number } | null>(null)
@@ -431,6 +430,7 @@ export function GameClient({
         }
         if (lastAppliedHandRef.current === tableState.hand_number) return
         lastAppliedHandRef.current = tableState.hand_number
+        setRevealByUser(false)
         if (pendingTimeLimitEnabled !== null) {
             setTimeLimitEnabled(pendingTimeLimitEnabled)
             setForceAllFold(false)
@@ -454,9 +454,6 @@ export function GameClient({
         return () => {
             if (transitionTimeoutRef.current) {
                 window.clearTimeout(transitionTimeoutRef.current)
-            }
-            if (foldRevealTimeoutRef.current) {
-                window.clearTimeout(foldRevealTimeoutRef.current)
             }
             clearNextHandDelayTimers()
             foldOverrideTimeoutsRef.current.forEach((timeout) =>
@@ -537,10 +534,6 @@ export function GameClient({
         ) {
             revealCompletedAtRef.current = null
         }
-        if (foldRevealTimeoutRef.current) {
-            window.clearTimeout(foldRevealTimeoutRef.current)
-            foldRevealTimeoutRef.current = null
-        }
         if (!tableState) {
             setRevealOpponents(false)
             return
@@ -595,13 +588,14 @@ export function GameClient({
                     })
                 }
             }
-            foldRevealTimeoutRef.current = window.setTimeout(() => {
-                setRevealOpponents(true)
-            }, foldRevealDelayMs)
+            return
+        }
+        if (revealByUser && hasShowdown) {
+            setRevealOpponents(true)
             return
         }
         setRevealOpponents(false)
-    }, [tableState?.hand_number, tableState?.street, hasShowdown, foldRevealDelayMs])
+    }, [tableState?.hand_number, tableState?.street, hasShowdown, revealByUser])
 
     useEffect(() => {
         if (!tableState) return
@@ -937,6 +931,20 @@ export function GameClient({
                                         {isWaitPaused ? "待ってない" : "待った"}
                                     </button>
                                 )}
+                                {isNextHandDelayActive && hasShowdown && (
+                                    <button
+                                        type="button"
+                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${
+                                            revealByUser
+                                                ? "bg-emerald-300 text-slate-900"
+                                                : "bg-emerald-400/90 text-slate-900 hover:bg-emerald-300"
+                                        }`}
+                                        onClick={() => setRevealByUser(true)}
+                                        disabled={revealByUser}
+                                    >
+                                        ハンド表示
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -959,11 +967,17 @@ export function GameClient({
                 </div>
             </main>
             {isMenuOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-                    <div className="relative w-full max-w-xs rounded-2xl border border-white/20 bg-slate-900/95 p-4 text-white shadow-xl">
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+                    onClick={() => setIsMenuOpen(false)}
+                >
+                    <div
+                        className="relative w-full max-w-xs rounded-2xl border border-white/20 bg-slate-900/95 p-4 text-white shadow-xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
                         <button
                             type="button"
-                            className="absolute right-3 top-3 text-white/70 hover:text-white"
+                            className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-full text-2xl text-white/70 hover:bg-white/10 hover:text-white"
                             onClick={() => setIsMenuOpen(false)}
                             aria-label="Close menu"
                         >
@@ -984,9 +998,9 @@ export function GameClient({
                             <button
                                 type="button"
                                 className={`rounded px-3 py-2 text-sm font-semibold ${
-                                    timeLimitEnabled
-                                        ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                        : "bg-white/10 text-white/80 hover:bg-white/20"
+                                    (pendingTimeLimitEnabled ?? timeLimitEnabled)
+                                        ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
+                                        : "bg-black/70 text-white/80 hover:bg-black/80"
                                 }`}
                                 onClick={() => {
                                     const currentTarget =
@@ -1003,7 +1017,11 @@ export function GameClient({
                             </button>
                             <button
                                 type="button"
-                                className="rounded bg-red-800/70 px-3 py-2 text-sm font-semibold text-white/90 hover:bg-red-700/70"
+                                className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${
+                                    leaveAfterHand
+                                        ? "bg-red-800/70 hover:bg-red-700/70"
+                                        : "bg-black/70 text-white/80 hover:bg-black/80"
+                                }`}
                                 onClick={() => {
                                     setLeaveAfterHand((prev) => {
                                         const nextValue = !prev

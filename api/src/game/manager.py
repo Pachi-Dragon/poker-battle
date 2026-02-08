@@ -128,6 +128,7 @@ class GameTable:
         self.pending_leave_seats: Set[int] = set()
         self.leave_after_hand_seats: Set[int] = set()
         self.pending_join_seats: Set[int] = set()
+        self.auto_play_seats: Set[int] = set()
         self.big_blind_seat: Optional[int] = None
         self.pending_payouts: Dict[int, int] = {}
 
@@ -202,6 +203,7 @@ class GameTable:
         self._reset_street_state()
 
     def _clear_seat(self, seat: SeatState) -> None:
+        self.auto_play_seats.discard(seat.seat_index)
         seat.player_id = None
         seat.name = None
         seat.stack = 0
@@ -484,6 +486,7 @@ class GameTable:
         seat = self._find_seat(player_id)
         if not seat:
             return
+        self.auto_play_seats.discard(seat.seat_index)
         in_active_hand = (
             seat.seat_index not in self.folded_seats
             and seat.seat_index not in self.pending_join_seats
@@ -540,6 +543,11 @@ class GameTable:
         return bool(seated) and all(seat.is_ready for seat in seated)
 
     def start_new_hand(self) -> None:
+        if self.auto_play_seats:
+            for seat_index in list(self.auto_play_seats):
+                seat = self.seats[seat_index]
+                if seat.player_id:
+                    self._clear_seat(seat)
         if len(self._occupied_seat_indices()) < 2:
             self.street = Street.waiting
             self.current_turn_seat = None
@@ -578,6 +586,7 @@ class GameTable:
         self._deal_hole_cards(deck)
         self._deal_board(deck)
         self._post_blinds()
+        self.apply_auto_play()
 
     def reset(self) -> None:
         for seat in self.seats:
@@ -589,6 +598,7 @@ class GameTable:
             seat.is_all_in = False
             seat.street_commit = 0
             seat.raise_blocked = False
+        self.auto_play_seats = set()
         self.street = Street.waiting
         self._reset_hand_state()
         self.pending_leave_seats = set()
@@ -670,7 +680,7 @@ class GameTable:
                     )
                 )
 
-    def record_action(self, payload: ActionPayload) -> None:
+    def record_action(self, payload: ActionPayload, *, skip_auto_play: bool = False) -> None:
         seat = self._find_seat(payload.player_id)
         if not seat:
             raise ValueError("Player not seated")
@@ -813,6 +823,52 @@ class GameTable:
             raise ValueError("Unknown action")
 
         self._advance_turn_or_street()
+        if not skip_auto_play:
+            self.apply_auto_play()
+
+    def set_auto_play(self, player_id: str, enabled: bool) -> None:
+        seat = self._find_seat(player_id)
+        if not seat:
+            return
+        if enabled:
+            self.auto_play_seats.add(seat.seat_index)
+        else:
+            self.auto_play_seats.discard(seat.seat_index)
+
+    def apply_auto_play(self) -> None:
+        safety = 0
+        while True:
+            if self.street not in (
+                Street.preflop,
+                Street.flop,
+                Street.turn,
+                Street.river,
+            ):
+                return
+            if self.current_turn_seat is None:
+                return
+            if self.current_turn_seat not in self.auto_play_seats:
+                return
+            if safety > self.max_players * 4:
+                return
+            seat_index = self.current_turn_seat
+            if seat_index in self.folded_seats or seat_index in self.all_in_seats:
+                self._advance_turn_or_street()
+                safety += 1
+                continue
+            seat = self.seats[seat_index]
+            if not seat.player_id:
+                self._advance_turn_or_street()
+                safety += 1
+                continue
+            player_commit = self.street_contribs.get(seat_index, 0)
+            to_call = max(0, self.current_bet - player_commit)
+            action = ActionType.check if to_call == 0 else ActionType.fold
+            self.record_action(
+                ActionPayload(player_id=seat.player_id, action=action),
+                skip_auto_play=True,
+            )
+            safety += 1
 
     def _record_action(
         self, seat: SeatState, action: str, amount: Optional[int] = None, detail: Optional[str] = None
@@ -893,10 +949,14 @@ class GameTable:
         )
         self.current_turn_seat = self._next_active_seat(self.dealer_seat)  # first to act postflop
 
-    def to_state(self) -> TableState:
+    def to_state(self, connected_player_ids: Optional[Set[str]] = None) -> TableState:
         positions = self._seat_positions()
         seats = []
+        connected = connected_player_ids or set()
         for seat in self.seats:
+            is_connected = True
+            if seat.player_id and connected_player_ids is not None:
+                is_connected = seat.player_id in connected
             seats.append(
                 SeatState(
                     seat_index=seat.seat_index,
@@ -906,6 +966,7 @@ class GameTable:
                     position=positions.get(seat.seat_index),
                     last_action=seat.last_action,
                     hole_cards=seat.hole_cards,
+                    is_connected=is_connected,
                     is_ready=seat.is_ready,
                     is_folded=seat.seat_index in self.folded_seats,
                     is_all_in=seat.seat_index in self.all_in_seats,

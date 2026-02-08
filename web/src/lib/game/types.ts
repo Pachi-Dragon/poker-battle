@@ -18,6 +18,7 @@ export interface SeatState {
     last_action?: string | null
     last_action_amount?: number | null
     hole_cards?: string[] | null
+    is_connected?: boolean
     is_ready: boolean
     is_folded: boolean
     is_all_in: boolean

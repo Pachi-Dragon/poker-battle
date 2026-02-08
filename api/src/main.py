@@ -20,6 +20,7 @@ HAND_DELAY_SECONDS = 1.0
 LEAVE_GRACE_SECONDS = 30.0
 GAUGE_COMPLETE_TIMEOUT_SECONDS = 30.0
 pending_leave_tasks: dict[str, asyncio.Task] = {}
+pending_disconnect_tasks: dict[str, asyncio.Task] = {}
 settlement_gauge_ready: set[str] = set()
 settlement_gauge_timeout_task: asyncio.Task | None = None
 
@@ -78,13 +79,29 @@ async def google_login(auth_data: AuthRequest):
 async def websocket_game(websocket: WebSocket):
     table_id = table.table_id
     await manager.connect(table_id, websocket)
+    def connected_player_ids() -> set[str]:
+        connections = manager.active_connections.get(table_id, set())
+        return {
+            pid
+            for ws in connections
+            if (pid := manager.get_player(ws)) is not None
+        }
+
+    def table_state_payload() -> dict:
+        return table.to_state(connected_player_ids()).model_dump()
+
     await manager.send(
         websocket,
-        {"type": "tableState", "payload": table.to_state().model_dump()},
+        {"type": "tableState", "payload": table_state_payload()},
     )
 
     async def cancel_pending_leave(player_id: str) -> None:
         task = pending_leave_tasks.pop(player_id, None)
+        if task:
+            task.cancel()
+
+    async def cancel_pending_disconnect(player_id: str) -> None:
+        task = pending_disconnect_tasks.pop(player_id, None)
         if task:
             task.cancel()
 
@@ -98,26 +115,34 @@ async def websocket_game(websocket: WebSocket):
             table.leave_player(player_id)
             await manager.broadcast(
                 table_id,
-                {"type": "tableState", "payload": table.to_state().model_dump()},
+                {"type": "tableState", "payload": table_state_payload()},
             )
 
         pending_leave_tasks[player_id] = asyncio.create_task(delayed_leave())
+
+    async def schedule_disconnect(player_id: str) -> None:
+        await cancel_pending_disconnect(player_id)
+
+        async def delayed_disconnect() -> None:
+            await asyncio.sleep(LEAVE_GRACE_SECONDS)
+            if manager.has_player(player_id):
+                return
+            table.set_auto_play(player_id, True)
+            table.apply_auto_play()
+            await manager.broadcast(
+                table_id,
+                {"type": "tableState", "payload": table_state_payload()},
+            )
+
+        pending_disconnect_tasks[player_id] = asyncio.create_task(delayed_disconnect())
 
     async def start_hand_with_delay() -> None:
         await asyncio.sleep(HAND_DELAY_SECONDS)
         table.start_new_hand()
         await manager.broadcast(
             table_id,
-            {"type": "handState", "payload": table.to_state().model_dump()},
+            {"type": "handState", "payload": table_state_payload()},
         )
-
-    def connected_player_ids() -> set[str]:
-        connections = manager.active_connections.get(table_id, set())
-        return {
-            pid
-            for ws in connections
-            if (pid := manager.get_player(ws)) is not None
-        }
 
     async def wait_for_all_gauges_then_start_hand() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
@@ -133,7 +158,7 @@ async def websocket_game(websocket: WebSocket):
                 table.start_new_hand()
                 await manager.broadcast(
                     table_id,
-                    {"type": "handState", "payload": table.to_state().model_dump()},
+                    {"type": "handState", "payload": table_state_payload()},
                 )
 
         settlement_gauge_timeout_task = asyncio.create_task(timeout_start())
@@ -152,7 +177,7 @@ async def websocket_game(websocket: WebSocket):
             table.start_new_hand()
             await manager.broadcast(
                 table_id,
-                {"type": "handState", "payload": table.to_state().model_dump()},
+                {"type": "handState", "payload": table_state_payload()},
             )
 
     try:
@@ -165,6 +190,8 @@ async def websocket_game(websocket: WebSocket):
                 data = JoinTablePayload(**payload)
                 manager.set_player(websocket, data.player_id)
                 await cancel_pending_leave(data.player_id)
+                await cancel_pending_disconnect(data.player_id)
+                table.set_auto_play(data.player_id, False)
                 existing = table.find_seat(data.player_id)
                 if existing:
                     table.join_player(data.player_id, data.name)
@@ -175,7 +202,7 @@ async def websocket_game(websocket: WebSocket):
                     # 参加時に自動着席せず、席選択に移る
                     pass
                 await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                    table_id, {"type": "tableState", "payload": table_state_payload()}
                 )
             elif message_type == "leaveTable":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
@@ -187,7 +214,7 @@ async def websocket_game(websocket: WebSocket):
                     table.mark_leave_after_hand(player_id)
                     await manager.broadcast(
                         table_id,
-                        {"type": "tableState", "payload": table.to_state().model_dump()},
+                        {"type": "tableState", "payload": table_state_payload()},
                     )
             elif message_type == "cancelLeaveAfterHand":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
@@ -195,7 +222,7 @@ async def websocket_game(websocket: WebSocket):
                     table.cancel_leave_after_hand(player_id)
                     await manager.broadcast(
                         table_id,
-                        {"type": "tableState", "payload": table.to_state().model_dump()},
+                        {"type": "tableState", "payload": table_state_payload()},
                     )
             elif message_type == "action":
                 data = ActionPayload(**payload)
@@ -206,7 +233,7 @@ async def websocket_game(websocket: WebSocket):
                 )
                 await manager.broadcast(
                     table_id,
-                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                    {"type": "tableState", "payload": table_state_payload()},
                 )
                 # ハンド終了（settlement）後は全プレイヤーのゲージが0になるまで待ってから次のハンドを開始
                 if (
@@ -222,18 +249,18 @@ async def websocket_game(websocket: WebSocket):
             elif message_type == "syncState":
                 await manager.send(
                     websocket,
-                    {"type": "tableState", "payload": table.to_state().model_dump()},
+                    {"type": "tableState", "payload": table_state_payload()},
                 )
             elif message_type == "reserveSeat":
                 data = ReserveSeatPayload(**payload)
                 table.reserve_seat(data.player_id, data.name, data.seat_index)
                 await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                    table_id, {"type": "tableState", "payload": table_state_payload()}
                 )
             elif message_type == "resetTable":
                 table.reset()
                 await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
+                    table_id, {"type": "tableState", "payload": table_state_payload()}
                 )
             elif message_type == "startHand":
                 if (
@@ -249,8 +276,12 @@ async def websocket_game(websocket: WebSocket):
     except WebSocketDisconnect:
         player_id = manager.get_player(websocket)
         if player_id:
-            await schedule_leave(player_id)
+            await schedule_disconnect(player_id)
         manager.disconnect(websocket)
+        await manager.broadcast(
+            table_id,
+            {"type": "tableState", "payload": table_state_payload()},
+        )
     except Exception as exc:
         await manager.send(
             websocket, {"type": "error", "payload": {"message": str(exc)}}
