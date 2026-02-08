@@ -99,11 +99,11 @@ export function ActionControls({
     const foldBlocked = Boolean(isTurn && table && toCall === 0)
     const showAllFoldToggle = Boolean(
         table &&
-            seat &&
-            !seat.is_folded &&
-            !isTurn &&
-            table.current_turn_seat !== null &&
-            ["preflop", "flop", "turn", "river"].includes(table.street)
+        seat &&
+        !seat.is_folded &&
+        !isTurn &&
+        table.current_turn_seat !== null &&
+        ["preflop", "flop", "turn", "river"].includes(table.street)
     )
 
     const effectiveBetSize = useMemo(
@@ -264,11 +264,10 @@ export function ActionControls({
                     {isTurn ? (
                         <button
                             type="button"
-                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${
-                                foldBlocked
+                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${foldBlocked
                                     ? "bg-sky-300/50 text-white/70"
                                     : "bg-sky-500/80 hover:bg-sky-500"
-                            }`}
+                                }`}
                             onClick={() => {
                                 if (foldBlocked) return
                                 onAction({
@@ -284,7 +283,10 @@ export function ActionControls({
                     ) : showAllFoldToggle ? (
                         <button
                             type="button"
-                            className="rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${allFoldEnabled
+                                    ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                                    : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
+                                }`}
                             onClick={() => {
                                 if (forceAllFold) return
                                 setAllFoldEnabled((prev) => !prev)
@@ -302,7 +304,7 @@ export function ActionControls({
                 {/* 自分のターン時のみ: 微調整ボタンとベットサイズバー */}
                 {isTurn && (
                     <div className="flex-1 min-w-0 flex gap-2 items-stretch justify-end ml-2">
-                        <div className="flex flex-col gap-2 shrink-0 justify-center">
+                        <div className="flex flex-col gap-2 shrink-0 justify-center mr-0.5">
                             {[
                                 { label: "+5", delta: 5 },
                                 { label: "+1", delta: 1 },
@@ -312,7 +314,7 @@ export function ActionControls({
                                 <button
                                     key={label}
                                     type="button"
-                                    className="w-7 h-6 rounded bg-white/20 hover:bg-white/30 text-xs font-medium disabled:opacity-50 disabled:pointer-events-none"
+                                    className="w-7 h-6.5 rounded bg-white/20 hover:bg-white/30 text-xs font-medium disabled:opacity-50 disabled:pointer-events-none"
                                     onClick={() => adjustBet(delta)}
                                     disabled={!table || sliderMin >= sliderMax}
                                 >

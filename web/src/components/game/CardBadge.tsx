@@ -1,6 +1,9 @@
+import { CSSProperties } from "react"
+
 interface CardBadgeProps {
     card: string
     className?: string
+    style?: CSSProperties
 }
 
 const suitColors: Record<string, string> = {
@@ -15,12 +18,13 @@ function getSuitColor(card: string) {
     return suitColors[suit] ?? "bg-slate-600"
 }
 
-export function CardBadge({ card, className = "" }: CardBadgeProps) {
+export function CardBadge({ card, className = "", style }: CardBadgeProps) {
     return (
         <span
-            className={`inline-flex min-w-10 items-center justify-center rounded border border-white/80 px-2.5 py-1.5 text-sm font-semibold text-white ${getSuitColor(
+            className={`inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/80 px-2.5 py-1.5 text-sm font-semibold text-white ${getSuitColor(
                 card
             )} ${className}`}
+            style={style}
         >
             {card}
         </span>

@@ -126,7 +126,10 @@ class GameTable:
         self.acted_seats: Set[int] = set()
         self.raise_blocked_seats: Set[int] = set()
         self.pending_leave_seats: Set[int] = set()
+        self.leave_after_hand_seats: Set[int] = set()
         self.pending_join_seats: Set[int] = set()
+        self.big_blind_seat: Optional[int] = None
+        self.pending_payouts: Dict[int, int] = {}
 
     def _seat_positions(self) -> Dict[int, str]:
         occupied = self._occupied_seat_indices()
@@ -195,6 +198,7 @@ class GameTable:
         self.folded_seats = set()
         self.all_in_seats = set()
         self.hand_contribs = {index: 0 for index in range(self.max_players)}
+        self.big_blind_seat = None
         self._reset_street_state()
 
     def _clear_seat(self, seat: SeatState) -> None:
@@ -208,6 +212,17 @@ class GameTable:
         seat.is_all_in = False
         seat.street_commit = 0
 
+    def apply_pending_payouts(self) -> None:
+        if not self.pending_payouts:
+            return
+        for seat_index, amount in list(self.pending_payouts.items()):
+            if amount <= 0:
+                continue
+            seat = self.seats[seat_index]
+            if seat.player_id:
+                seat.stack += amount
+        self.pending_payouts.clear()
+
     def _finalize_pending_leaves(self) -> None:
         if not self.pending_leave_seats:
             return
@@ -216,6 +231,15 @@ class GameTable:
             if seat.player_id:
                 self._clear_seat(seat)
             self.pending_leave_seats.discard(seat_index)
+
+    def _finalize_leave_after_hand(self) -> None:
+        if not self.leave_after_hand_seats:
+            return
+        for seat_index in list(self.leave_after_hand_seats):
+            seat = self.seats[seat_index]
+            if seat.player_id:
+                self._clear_seat(seat)
+            self.leave_after_hand_seats.discard(seat_index)
 
     def _clear_pending_joins(self) -> None:
         if not self.pending_join_seats:
@@ -241,8 +265,6 @@ class GameTable:
                 break
             if self._hand_over():
                 self._advance_turn_or_street()
-                if self.street == Street.settlement:
-                    self._finalize_pending_leaves()
                 break
             if self.current_turn_seat is None:
                 self.current_turn_seat = self._next_active_seat(self.dealer_seat)
@@ -341,7 +363,7 @@ class GameTable:
         in_hand = self._in_hand_seat_indices()
         if len(in_hand) == 1:
             winner = in_hand[0]
-            self.seats[winner].stack += self.pot
+            self.pending_payouts[winner] = self.pending_payouts.get(winner, 0) + self.pot
             self.action_history.append(
                 ActionRecord(
                     actor_id=self.seats[winner].player_id,
@@ -374,7 +396,9 @@ class GameTable:
                 payout = split + (1 if remainder > 0 else 0)
                 if remainder > 0:
                     remainder -= 1
-                self.seats[seat_index].stack += payout
+                self.pending_payouts[seat_index] = (
+                    self.pending_payouts.get(seat_index, 0) + payout
+                )
                 self.action_history.append(
                     ActionRecord(
                         actor_id=self.seats[seat_index].player_id,
@@ -399,6 +423,8 @@ class GameTable:
         if existing:
             if existing.seat_index in self.pending_leave_seats:
                 self.pending_leave_seats.discard(existing.seat_index)
+            if existing.seat_index in self.leave_after_hand_seats:
+                self.leave_after_hand_seats.discard(existing.seat_index)
             if name and existing.name != name:
                 existing.name = name
             return existing  # type: ignore[return-value]
@@ -488,6 +514,22 @@ class GameTable:
                 self._advance_turn_or_street()
         self._auto_play_pending_leaves()
 
+    def mark_leave_after_hand(self, player_id: str) -> None:
+        seat = self._find_seat(player_id)
+        if not seat:
+            return
+        if self.street == Street.waiting:
+            self._clear_seat(seat)
+            return
+        self.leave_after_hand_seats.add(seat.seat_index)
+
+    def cancel_leave_after_hand(self, player_id: str) -> None:
+        seat = self._find_seat(player_id)
+        if not seat:
+            return
+        if seat.seat_index in self.leave_after_hand_seats:
+            self.leave_after_hand_seats.discard(seat.seat_index)
+
     def mark_ready(self, player_id: str) -> None:
         seat = self._find_seat(player_id)
         if seat:
@@ -501,6 +543,14 @@ class GameTable:
         if len(self._occupied_seat_indices()) < 2:
             self.street = Street.waiting
             self.current_turn_seat = None
+            self._reset_hand_state()
+            for seat in self.seats:
+                seat.last_action = None
+                seat.hole_cards = None
+                seat.is_ready = False
+                seat.is_folded = False
+                seat.is_all_in = False
+                seat.street_commit = 0
             return
         next_dealer = self._next_occupied_seat(self.dealer_seat)
         if next_dealer is not None:
@@ -542,9 +592,12 @@ class GameTable:
         self.street = Street.waiting
         self._reset_hand_state()
         self.pending_leave_seats = set()
+        self.leave_after_hand_seats = set()
         self.pending_join_seats = set()
+        self.pending_payouts = {}
 
     def _post_blinds(self) -> None:
+        self.big_blind_seat = None
         occupied = self._occupied_seat_indices()
         if len(occupied) == 2:
             sb_index = self.dealer_seat
@@ -559,6 +612,7 @@ class GameTable:
                 return
             self._post_blind(sb_index, self.small_blind, "post_sb")
             self._post_blind(bb_index, self.big_blind, "post_bb")
+            self.big_blind_seat = bb_index
             self.current_bet = max(self.street_contribs.values())
             self.min_raise = self.big_blind
             self.current_turn_seat = self._next_active_seat(bb_index)
@@ -574,6 +628,7 @@ class GameTable:
 
         self._post_blind(sb_index, self.small_blind, "post_sb")
         self._post_blind(bb_index, self.big_blind, "post_bb")
+        self.big_blind_seat = bb_index
 
         self.current_bet = max(self.street_contribs.values())
         self.min_raise = self.big_blind
@@ -782,6 +837,15 @@ class GameTable:
             return True
         if self.current_bet == 0:
             return all(seat_index in self.acted_seats for seat_index in active)
+        if (
+            self.street == Street.preflop
+            and self.current_bet == self.big_blind
+            and self.big_blind_seat is not None
+            and self.big_blind_seat in self._in_hand_seat_indices()
+            and self.big_blind_seat not in self.all_in_seats
+            and self.big_blind_seat not in self.acted_seats
+        ):
+            return False
         for seat_index in self._in_hand_seat_indices():
             if seat_index in self.all_in_seats:
                 continue
@@ -797,7 +861,6 @@ class GameTable:
                 ActionRecord(action="hand_end", street=self.street)
             )
             self._settle_pots()
-            self._finalize_pending_leaves()
             return
         if self._street_complete():
             self._advance_street()
@@ -819,7 +882,6 @@ class GameTable:
                 ActionRecord(action="showdown", street=self.street)
             )
             self._settle_pots()
-            self._finalize_pending_leaves()
             return
         else:
             self.street = Street.showdown

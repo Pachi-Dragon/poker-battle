@@ -16,6 +16,7 @@ export interface SeatState {
     stack: number
     position?: string | null
     last_action?: string | null
+    last_action_amount?: number | null
     hole_cards?: string[] | null
     is_ready: boolean
     is_folded: boolean

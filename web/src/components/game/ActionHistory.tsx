@@ -4,12 +4,14 @@ interface ActionHistoryProps {
     actions: ActionRecord[]
     className?: string
     maxHeight?: number | null
+    hideAmounts?: boolean
 }
 
 export function ActionHistory({
     actions,
     className = "",
     maxHeight,
+    hideAmounts = false,
 }: ActionHistoryProps) {
     return (
         <div
@@ -33,7 +35,7 @@ export function ActionHistory({
                                 {action.actor_name ?? "System"}
                             </span>{" "}
                             {action.action}
-                            {action.amount ? ` ${action.amount}` : ""}
+                            {!hideAmounts && action.amount ? ` ${action.amount}` : ""}
                             {action.detail ? ` (${action.detail})` : ""}
                         </li>
                     ))}

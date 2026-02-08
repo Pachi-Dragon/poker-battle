@@ -1,5 +1,5 @@
 import { SeatState } from "@/lib/game/types"
-import { CSSProperties, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { CardBadge } from "./CardBadge"
 
 interface SeatCardProps {
@@ -7,14 +7,13 @@ interface SeatCardProps {
     isHero: boolean
     isCurrentTurn: boolean
     isTopSeat: boolean
-    chipToX: string
-    chipToY: string
     canReserve: boolean
     /** 相手のハンドを表で表示する（ショーダウン時のみ true） */
     showHoleCards?: boolean
-    showTimer?: boolean
-    timeGaugePercent?: number
-    timeLeftSeconds?: number
+    /** Fold決着後のチップ表示を数字のみで出す */
+    chipsOnlyBadge?: boolean
+    chipsOnlyAmount?: number
+    hideCommitBadge?: boolean
     onReserve?: () => void
 }
 
@@ -23,42 +22,66 @@ export function SeatCard({
     isHero,
     isCurrentTurn,
     isTopSeat,
-    chipToX,
-    chipToY,
     canReserve,
     showHoleCards = true,
-    showTimer = false,
-    timeGaugePercent = 100,
-    timeLeftSeconds = 0,
+    chipsOnlyBadge = false,
+    chipsOnlyAmount,
+    hideCommitBadge = false,
     onReserve,
 }: SeatCardProps) {
+    const cardDropAnimationMs = 420
     const occupied = Boolean(seat.player_id)
-    const [settlingAmount, setSettlingAmount] = useState<number | null>(null)
     const [animatedHoleIndices, setAnimatedHoleIndices] = useState<number[]>([])
-    const prevCommitRef = useRef<number>(seat.street_commit ?? 0)
     const prevHoleCountRef = useRef<number>(seat.hole_cards?.length ?? 0)
     const chipPositionClass = isTopSeat
         ? "-bottom-1 translate-y-full"
-        : "-top-1 -translate-y-full"
-    const chipToStyle = {
-        ["--chip-to-x" as any]: chipToX,
-        ["--chip-to-y" as any]: chipToY,
-    } as CSSProperties
-
-    useEffect(() => {
-        const prevCommit = prevCommitRef.current
-        const currentCommit = seat.street_commit ?? 0
-        if (prevCommit > 0 && currentCommit === 0) {
-            setSettlingAmount(prevCommit)
-        }
-        prevCommitRef.current = currentCommit
-    }, [seat.street_commit])
-
-    useEffect(() => {
-        if (settlingAmount === null) return
-        const timeout = window.setTimeout(() => setSettlingAmount(null), 650)
-        return () => window.clearTimeout(timeout)
-    }, [settlingAmount])
+        : "-bottom-1 translate-y-full"
+    const normalizedLastAction = (seat.last_action ?? "")
+        .toLowerCase()
+        .replace("_", "-")
+    const effectiveAction =
+        seat.is_all_in || normalizedLastAction === "all-in"
+            ? "all-in"
+            : normalizedLastAction
+    const actionToneClass = chipsOnlyBadge
+        ? "bg-black text-white"
+        : effectiveAction === "fold"
+            ? "bg-sky-900/50 text-sky-100"
+            : effectiveAction === "call" || effectiveAction === "check"
+                ? "bg-emerald-900/60 text-emerald-100"
+                : effectiveAction === "bet" ||
+                    effectiveAction === "raise" ||
+                    effectiveAction === "all-in"
+                    ? "bg-red-900/60 text-red-200"
+                    : "bg-black/70 text-white"
+    const formatActionLabel = (action: string, amount: number) => {
+        if (action === "fold") return "Fold"
+        if (action === "check") return "Check"
+        if (action === "post-sb") return amount > 0 ? `${amount}` : null
+        if (action === "post-bb") return amount > 0 ? `${amount}` : null
+        if (action === "call") return amount > 0 ? `Call ${amount}` : "Call"
+        if (action === "bet") return amount > 0 ? `Bet ${amount}` : "Bet"
+        if (action === "raise") return amount > 0 ? `Raise ${amount}` : "Raise"
+        if (action === "all-in") return amount > 0 ? `All-in ${amount}` : "All-in"
+        return amount > 0 ? `${amount}` : null
+    }
+    const actionAmount =
+        seat.last_action_amount ?? (seat.street_commit ?? 0)
+    const commitLabel = formatActionLabel(
+        effectiveAction,
+        actionAmount
+    )
+    const chipsOnlyValue = chipsOnlyAmount ?? seat.street_commit ?? 0
+    const numericOnly =
+        chipsOnlyBadge || (commitLabel !== null && /^\d+$/.test(commitLabel))
+    const showCommitBadge = chipsOnlyBadge
+        ? occupied && chipsOnlyValue > 0
+        : !hideCommitBadge &&
+        occupied &&
+        (commitLabel !== null ||
+            (seat.street_commit ?? 0) > 0 ||
+            effectiveAction === "fold" ||
+            effectiveAction === "check")
 
     useEffect(() => {
         const prevCount = prevHoleCountRef.current
@@ -73,7 +96,7 @@ export function SeatCard({
             setAnimatedHoleIndices(indices)
             const timeout = window.setTimeout(() => {
                 setAnimatedHoleIndices([])
-            }, 320)
+            }, cardDropAnimationMs)
             return () => window.clearTimeout(timeout)
         }
         prevHoleCountRef.current = nextCount
@@ -82,15 +105,13 @@ export function SeatCard({
     return (
         <div className="flex flex-col items-stretch gap-1">
             <div
-                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${
-                    occupied ? "bg-slate-950" : "bg-slate-950/20"
-                } ${
-                    occupied
+                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${occupied ? "bg-slate-950" : "bg-slate-950/20"
+                    } ${occupied
                         ? isCurrentTurn
                             ? "border-yellow-400"
                             : "border-white/20"
                         : "border-white/30 border-dashed"
-                }`}
+                    }`}
             >
                 {!occupied && canReserve && (
                     <button
@@ -104,26 +125,19 @@ export function SeatCard({
                         </span>
                     </button>
                 )}
-                {occupied && seat.street_commit > 0 && (
+                {showCommitBadge && (
                     <div
                         className={`absolute left-1/2 -translate-x-1/2 ${chipPositionClass}`}
                     >
-                        <div className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-black/70 px-2.5 py-1 text-sm font-semibold text-white shadow">
-                            <span className="inline-flex h-3 w-3 rounded-full bg-yellow-200 shadow-inner" />
-                            <span>{seat.street_commit}</span>
-                        </div>
-                    </div>
-                )}
-                {occupied && settlingAmount !== null && (
-                    <div
-                        className={`absolute left-1/2 -translate-x-1/2 ${chipPositionClass} pointer-events-none`}
-                    >
                         <div
-                            className="chip-to-pot inline-flex items-center gap-1 rounded-full border border-white/20 bg-black/70 px-2.5 py-1 text-sm font-semibold text-white shadow"
-                            style={chipToStyle}
+                            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-white/20 py-1 text-sm font-semibold shadow ${numericOnly ? "w-[3.25rem] px-2" : "w-[7rem] px-3"
+                                } ${actionToneClass}`}
                         >
-                            <span className="inline-flex h-3 w-3 rounded-full bg-yellow-200 shadow-inner" />
-                            <span>{settlingAmount}</span>
+                            <span>
+                                {chipsOnlyBadge
+                                    ? chipsOnlyValue
+                                    : commitLabel ?? seat.street_commit}
+                            </span>
                         </div>
                     </div>
                 )}
@@ -140,18 +154,17 @@ export function SeatCard({
                                     <CardBadge
                                         key={`${card}-${index}`}
                                         card={card}
-                                        className={`flex min-w-0 flex-1 ${
-                                            animatedHoleIndices.includes(index)
-                                                ? "board-card-drop"
-                                                : ""
-                                        }`}
+                                        className={`flex min-w-0 shrink-0 ${animatedHoleIndices.includes(index)
+                                            ? "board-card-drop"
+                                            : ""
+                                            }`}
                                     />
                                 ))
                             ) : (
                                 seat.hole_cards.map((_, index) => (
                                     <span
                                         key={`back-${index}`}
-                                        className="inline-flex h-8 min-w-0 flex-1 items-center justify-center rounded border border-white/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 px-2.5 py-1.5 shadow-inner"
+                                        className="inline-flex h-8 w-[45px] shrink-0 items-center justify-center rounded border border-white/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 px-2.5 py-1.5 shadow-inner"
                                         style={{
                                             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.4)",
                                         }}
@@ -162,10 +175,10 @@ export function SeatCard({
                             )
                         ) : (
                             <>
-                                <span className="inline-flex min-w-0 flex-1 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
+                                <span className="inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
                                     &nbsp;
                                 </span>
-                                <span className="inline-flex min-w-0 flex-1 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
+                                <span className="inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
                                     &nbsp;
                                 </span>
                             </>
@@ -178,11 +191,10 @@ export function SeatCard({
                     </div>
                     <div className="mt-1 flex items-center justify-between min-h-[0.75rem]">
                         <span
-                            className={`inline-flex h-5 min-w-[2rem] items-center justify-center rounded-full px-2 text-sm font-semibold leading-none ${
-                                occupied
-                                    ? "bg-orange-700/90 text-white"
-                                    : "bg-orange-700/20 text-transparent"
-                            }`}
+                            className={`inline-flex h-5 min-w-[2rem] items-center justify-center rounded-full px-2 text-sm font-semibold leading-none ${occupied
+                                ? "bg-orange-700/90 text-white"
+                                : "bg-orange-700/20 text-transparent"
+                                }`}
                         >
                             {occupied ? seat.position : "\u00A0"}
                         </span>
@@ -192,19 +204,6 @@ export function SeatCard({
                     </div>
                 </div>
             </div>
-            {showTimer && (
-                <div className="px-1">
-                    <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                        <div
-                            className="h-full rounded-full bg-amber-400 transition-[width] duration-200"
-                            style={{ width: `${timeGaugePercent}%` }}
-                        />
-                    </div>
-                    <div className="mt-0.5 text-center text-[10px] text-white/70">
-                        {timeLeftSeconds}秒
-                    </div>
-                </div>
-            )}
         </div>
     )
 }

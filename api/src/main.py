@@ -18,7 +18,10 @@ manager = ConnectionManager()
 table = GameTable(table_id="default")
 HAND_DELAY_SECONDS = 1.0
 LEAVE_GRACE_SECONDS = 30.0
+GAUGE_COMPLETE_TIMEOUT_SECONDS = 30.0
 pending_leave_tasks: dict[str, asyncio.Task] = {}
+settlement_gauge_ready: set[str] = set()
+settlement_gauge_timeout_task: asyncio.Task | None = None
 
 # Next.js(フロントエンド)からのアクセスを許可
 app.add_middleware(
@@ -108,6 +111,50 @@ async def websocket_game(websocket: WebSocket):
             {"type": "handState", "payload": table.to_state().model_dump()},
         )
 
+    def connected_player_ids() -> set[str]:
+        connections = manager.active_connections.get(table_id, set())
+        return {
+            pid
+            for ws in connections
+            if (pid := manager.get_player(ws)) is not None
+        }
+
+    async def wait_for_all_gauges_then_start_hand() -> None:
+        global settlement_gauge_ready, settlement_gauge_timeout_task
+        settlement_gauge_ready = set()
+
+        async def timeout_start() -> None:
+            await asyncio.sleep(GAUGE_COMPLETE_TIMEOUT_SECONDS)
+            if table.street == Street.settlement:
+                settlement_gauge_ready.clear()
+                table.apply_pending_payouts()
+                table._finalize_pending_leaves()
+                table._finalize_leave_after_hand()
+                table.start_new_hand()
+                await manager.broadcast(
+                    table_id,
+                    {"type": "handState", "payload": table.to_state().model_dump()},
+                )
+
+        settlement_gauge_timeout_task = asyncio.create_task(timeout_start())
+
+    async def check_gauge_complete_and_start() -> None:
+        global settlement_gauge_ready, settlement_gauge_timeout_task
+        required = connected_player_ids()
+        if required and settlement_gauge_ready >= required:
+            if settlement_gauge_timeout_task:
+                settlement_gauge_timeout_task.cancel()
+                settlement_gauge_timeout_task = None
+            settlement_gauge_ready.clear()
+            table.apply_pending_payouts()
+            table._finalize_pending_leaves()
+            table._finalize_leave_after_hand()
+            table.start_new_hand()
+            await manager.broadcast(
+                table_id,
+                {"type": "handState", "payload": table.to_state().model_dump()},
+            )
+
     try:
         while True:
             message = await websocket.receive_json()
@@ -125,7 +172,8 @@ async def websocket_game(websocket: WebSocket):
                     # hand in progress: wait for seat reservation
                     pass
                 else:
-                    table.join_player(data.player_id, data.name)
+                    # 参加時に自動着席せず、席選択に移る
+                    pass
                 await manager.broadcast(
                     table_id, {"type": "tableState", "payload": table.to_state().model_dump()}
                 )
@@ -133,6 +181,22 @@ async def websocket_game(websocket: WebSocket):
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
                     await schedule_leave(player_id)
+            elif message_type == "leaveAfterHand":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    table.mark_leave_after_hand(player_id)
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "tableState", "payload": table.to_state().model_dump()},
+                    )
+            elif message_type == "cancelLeaveAfterHand":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    table.cancel_leave_after_hand(player_id)
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "tableState", "payload": table.to_state().model_dump()},
+                    )
             elif message_type == "action":
                 data = ActionPayload(**payload)
                 table.record_action(data)
@@ -144,12 +208,17 @@ async def websocket_game(websocket: WebSocket):
                     table_id,
                     {"type": "tableState", "payload": table.to_state().model_dump()},
                 )
-                # ハンド終了（settlement）後は2人以上いれば次のハンドを自動開始
+                # ハンド終了（settlement）後は全プレイヤーのゲージが0になるまで待ってから次のハンドを開始
                 if (
                     table.street == Street.settlement
                     and len([s for s in table.seats if s.player_id]) >= 2
                 ):
-                    await start_hand_with_delay()
+                    await wait_for_all_gauges_then_start_hand()
+            elif message_type == "nextHandGaugeComplete":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id and table.street == Street.settlement:
+                    settlement_gauge_ready.add(player_id)
+                    await check_gauge_complete_and_start()
             elif message_type == "syncState":
                 await manager.send(
                     websocket,

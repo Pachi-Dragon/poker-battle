@@ -5,11 +5,13 @@
   -webkit-appearance: none;
   appearance: none;
 }
+
 .vertical-slider::-webkit-slider-runnable-track {
   width: 6px;
   background: rgba(255, 255, 255, 0.25);
   border-radius: 3px;
 }
+
 .vertical-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 18px;
@@ -19,11 +21,13 @@
   cursor: pointer;
   margin-top: 0;
 }
+
 .vertical-slider::-moz-range-track {
   width: 6px;
   background: rgba(255, 255, 255, 0.25);
   border-radius: 3px;
 }
+
 .vertical-slider::-moz-range-thumb {
   width: 18px;
   height: 18px;
@@ -33,32 +37,16 @@
   border: none;
 }
 
-@keyframes chip-to-pot {
-  0% {
-    transform: translate(0, 0) scale(1);
-    opacity: 1;
-  }
-  80% {
-    opacity: 0.9;
-  }
-  100% {
-    transform: translate(var(--chip-to-x, 0), var(--chip-to-y, 0)) scale(0.2);
-    opacity: 0;
-  }
-}
-
-.chip-to-pot {
-  animation: chip-to-pot 650ms ease-in forwards;
-}
-
 @keyframes board-card-drop {
   0% {
     transform: translateY(-12px);
     opacity: 0;
   }
+
   60% {
     opacity: 1;
   }
+
   100% {
     transform: translateY(0);
     opacity: 1;
@@ -66,5 +54,7 @@
 }
 
 .board-card-drop {
-  animation: board-card-drop 280ms ease-out;
+  animation: board-card-drop var(--board-card-drop-duration, 420ms) ease-out;
+  animation-delay: var(--board-card-drop-delay, 0ms);
+  animation-fill-mode: both;
 }
