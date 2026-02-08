@@ -167,8 +167,8 @@ export function BoardPot({
                 <button
                     type="button"
                     className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
-                            ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                            : "bg-white/10 text-white/40 cursor-not-allowed"
+                        ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                        : "bg-white/10 text-white/40 cursor-not-allowed"
                         }`}
                     onClick={onStart}
                     disabled={!canStart}

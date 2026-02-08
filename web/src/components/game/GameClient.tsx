@@ -331,13 +331,13 @@ export function GameClient({
                         prevState.street === "settlement")
                 const sanitizedNextState = isNewHand
                     ? {
-                          ...nextState,
-                          seats: nextState.seats.map((seat) => ({
-                              ...seat,
-                              last_action: null,
-                              last_action_amount: null,
-                          })),
-                      }
+                        ...nextState,
+                        seats: nextState.seats.map((seat) => ({
+                            ...seat,
+                            last_action: null,
+                            last_action_amount: null,
+                        })),
+                    }
                     : nextState
                 if (shouldDelayNextHand) {
                     // サーバーは全プレイヤーのゲージ完了後にのみ次のハンドを送る
@@ -493,15 +493,15 @@ export function GameClient({
     const isWaitingPlayer = Boolean(tableState && !heroSeat)
     const isHeroTurn = Boolean(
         tableState &&
-            heroSeat &&
-            tableState.current_turn_seat !== null &&
-            tableState.current_turn_seat !== undefined &&
-            tableState.current_turn_seat === heroSeat.seat_index
+        heroSeat &&
+        tableState.current_turn_seat !== null &&
+        tableState.current_turn_seat !== undefined &&
+        tableState.current_turn_seat === heroSeat.seat_index
     )
     const canStartHand = Boolean(
         tableState &&
-            tableState.street === "waiting" &&
-            tableState.seats.filter((seat) => seat.player_id).length >= 2
+        tableState.street === "waiting" &&
+        tableState.seats.filter((seat) => seat.player_id).length >= 2
     )
 
     useEffect(() => {
@@ -781,7 +781,7 @@ export function GameClient({
     const nextHandDelaySeconds = Math.max(0, Math.ceil(nextHandDelayMsLeft / 1000))
     const displayBlinds =
         (isNextHandDelayActive || nextHandStartTimeoutRef.current) &&
-        frozenBlindsRef.current
+            frozenBlindsRef.current
             ? frozenBlindsRef.current
             : tableState
                 ? { sb: tableState.small_blind, bb: tableState.big_blind }
@@ -794,13 +794,13 @@ export function GameClient({
         displayTableState?.street === "settlement" && !hasShowdown
     const potOverride =
         displayTableState &&
-        ["showdown", "settlement"].includes(displayTableState.street) &&
-        lastPotForHandRef.current.hand === displayTableState.hand_number
+            ["showdown", "settlement"].includes(displayTableState.street) &&
+            lastPotForHandRef.current.hand === displayTableState.hand_number
             ? lastPotForHandRef.current.pot
             : undefined
     const foldVisibleStreet =
         isFoldedSettlement &&
-        lastFoldStreetRef.current.hand === displayTableState?.hand_number
+            lastFoldStreetRef.current.hand === displayTableState?.hand_number
             ? lastFoldStreetRef.current.street
             : null
     const hideActionAmounts =
@@ -852,31 +852,31 @@ export function GameClient({
                             const isTopSeat =
                                 posIndex === 0 || posIndex === 1 || posIndex === 5
                             return (
-                            <div
-                                key={seat.seat_index}
-                                className={`absolute w-28 sm:w-32 ${getSeatPosition(seat.seat_index)}`}
-                            >
-                                <SeatCard
-                                    seat={seat}
-                                    isHero={heroSeat?.seat_index === seat.seat_index}
-                                    isCurrentTurn={
-                                        displayTableState?.current_turn_seat === seat.seat_index
-                                    }
-                                    isTopSeat={isTopSeat}
-                                    canReserve={isWaitingPlayer && !seat.player_id}
-                                    showHoleCards={
-                                        heroSeat?.seat_index === seat.seat_index ||
-                                        revealOpponents
-                                    }
-                                    chipsOnlyBadge={override?.mode === "chips"}
-                                    chipsOnlyAmount={override?.amount}
-                                    hideCommitBadge={
-                                        override?.mode === "hide" || hideActionAmounts
-                                    }
-                                    onReserve={() => handleReserveSeat(seat.seat_index)}
-                                />
-                            </div>
-                        )
+                                <div
+                                    key={seat.seat_index}
+                                    className={`absolute w-28 sm:w-32 ${getSeatPosition(seat.seat_index)}`}
+                                >
+                                    <SeatCard
+                                        seat={seat}
+                                        isHero={heroSeat?.seat_index === seat.seat_index}
+                                        isCurrentTurn={
+                                            displayTableState?.current_turn_seat === seat.seat_index
+                                        }
+                                        isTopSeat={isTopSeat}
+                                        canReserve={isWaitingPlayer && !seat.player_id}
+                                        showHoleCards={
+                                            heroSeat?.seat_index === seat.seat_index ||
+                                            revealOpponents
+                                        }
+                                        chipsOnlyBadge={override?.mode === "chips"}
+                                        chipsOnlyAmount={override?.amount}
+                                        hideCommitBadge={
+                                            override?.mode === "hide" || hideActionAmounts
+                                        }
+                                        onReserve={() => handleReserveSeat(seat.seat_index)}
+                                    />
+                                </div>
+                            )
                         }) ?? (
                                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/60">
                                     Loading seats...
@@ -902,30 +902,28 @@ export function GameClient({
                         <div className="absolute left-0 right-0 -top-10 z-10 flex flex-col items-center">
                             <div className="flex w-full max-w-sm items-center justify-center gap-2">
                                 <div className="relative h-2.5 w-[40%] min-w-[120px] shrink-0 overflow-hidden rounded-full bg-white/60">
-                                <div
-                                    className="h-full rounded-full bg-amber-300/60 transition-[width]"
-                                    style={{
-                                        width: `${
-                                            isNextHandDelayActive
-                                                ? nextHandDelayPercent
-                                                : timeGaugePercent
-                                        }%`,
-                                    }}
-                                />
-                                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-black/80 leading-none">
-                                    {isNextHandDelayActive
-                                        ? nextHandDelaySeconds
-                                        : timeLeftSeconds}
+                                    <div
+                                        className="h-full rounded-full bg-amber-300/60 transition-[width]"
+                                        style={{
+                                            width: `${isNextHandDelayActive
+                                                    ? nextHandDelayPercent
+                                                    : timeGaugePercent
+                                                }%`,
+                                        }}
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-black/80 leading-none">
+                                        {isNextHandDelayActive
+                                            ? nextHandDelaySeconds
+                                            : timeLeftSeconds}
+                                    </div>
                                 </div>
-                            </div>
                                 {isNextHandDelayActive && (
                                     <button
                                         type="button"
-                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${
-                                            isWaitPaused
+                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${isWaitPaused
                                                 ? "bg-white/20 text-white/80 hover:bg-white/30"
                                                 : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                        }`}
+                                            }`}
                                         onClick={() => setIsWaitPaused((prev) => !prev)}
                                     >
                                         {isWaitPaused ? "待ってない" : "待った"}
@@ -934,11 +932,10 @@ export function GameClient({
                                 {isNextHandDelayActive && hasShowdown && (
                                     <button
                                         type="button"
-                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${
-                                            revealByUser
+                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${revealByUser
                                                 ? "bg-emerald-300 text-slate-900"
                                                 : "bg-emerald-400/90 text-slate-900 hover:bg-emerald-300"
-                                        }`}
+                                            }`}
                                         onClick={() => setRevealByUser(true)}
                                         disabled={revealByUser}
                                     >
@@ -997,11 +994,10 @@ export function GameClient({
                             </button>
                             <button
                                 type="button"
-                                className={`rounded px-3 py-2 text-sm font-semibold ${
-                                    (pendingTimeLimitEnabled ?? timeLimitEnabled)
+                                className={`rounded px-3 py-2 text-sm font-semibold ${(pendingTimeLimitEnabled ?? timeLimitEnabled)
                                         ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
                                         : "bg-black/70 text-white/80 hover:bg-black/80"
-                                }`}
+                                    }`}
                                 onClick={() => {
                                     const currentTarget =
                                         pendingTimeLimitEnabled ?? timeLimitEnabled
@@ -1017,11 +1013,10 @@ export function GameClient({
                             </button>
                             <button
                                 type="button"
-                                className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${
-                                    leaveAfterHand
+                                className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${leaveAfterHand
                                         ? "bg-red-800/70 hover:bg-red-700/70"
                                         : "bg-black/70 text-white/80 hover:bg-black/80"
-                                }`}
+                                    }`}
                                 onClick={() => {
                                     setLeaveAfterHand((prev) => {
                                         const nextValue = !prev

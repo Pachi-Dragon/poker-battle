@@ -265,8 +265,8 @@ export function ActionControls({
                         <button
                             type="button"
                             className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${foldBlocked
-                                    ? "bg-sky-300/50 text-white/70"
-                                    : "bg-sky-500/80 hover:bg-sky-500"
+                                ? "bg-sky-300/50 text-white/70"
+                                : "bg-sky-500/80 hover:bg-sky-500"
                                 }`}
                             onClick={() => {
                                 if (foldBlocked) return
@@ -284,8 +284,8 @@ export function ActionControls({
                         <button
                             type="button"
                             className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${allFoldEnabled
-                                    ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
-                                    : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
+                                ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                                : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
                                 }`}
                             onClick={() => {
                                 if (forceAllFold) return

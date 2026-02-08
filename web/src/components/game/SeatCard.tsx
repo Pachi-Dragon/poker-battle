@@ -106,19 +106,17 @@ export function SeatCard({
     return (
         <div className="flex flex-col items-stretch gap-1">
             <div
-                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${
-                    occupied
+                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${occupied
                         ? isDisconnected
                             ? "bg-slate-800/90 text-white/60 border-white/10"
                             : "bg-slate-950"
                         : "bg-slate-950/20"
-                } ${
-                    occupied
+                    } ${occupied
                         ? isCurrentTurn
                             ? "border-yellow-400"
                             : "border-white/20"
                         : "border-white/30 border-dashed"
-                }`}
+                    }`}
             >
                 {isDisconnected && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-black/45">
