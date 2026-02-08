@@ -1,0 +1,7 @@
+# アップロードから除外（.next のロックで PermissionError が出るため）
+.next
+node_modules
+.git
+.env*
+*.md
+npm-debug.log*
