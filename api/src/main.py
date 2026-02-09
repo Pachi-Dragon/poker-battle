@@ -7,6 +7,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from dotenv import load_dotenv
 
+from .allowlist import AllowListStore
 from .earnings.store import EarningsStore
 from .game.manager import ConnectionManager, GameTable
 from .game.models import (
@@ -24,6 +25,7 @@ app = FastAPI()
 manager = ConnectionManager()
 table = GameTable(table_id="default")
 earnings_store = EarningsStore()
+allowlist_store = AllowListStore()
 HAND_DELAY_SECONDS = 1.0
 RUNOUT_DELAY_SECONDS = 1.6
 LEAVE_GRACE_SECONDS = 30.0
@@ -78,6 +80,10 @@ async def google_login(auth_data: AuthRequest):
         user_id = id_info['sub']  # Googleユーザー固有のID
         email = id_info.get('email')
         name = id_info.get('name')
+
+        allowed_emails = await allowlist_store.get_allowed_emails()
+        if allowed_emails and (not email or email.lower() not in allowed_emails):
+            raise HTTPException(status_code=403, detail="Email not allowed")
 
         # ここで本来はデータベースへの保存等を行います
         return {

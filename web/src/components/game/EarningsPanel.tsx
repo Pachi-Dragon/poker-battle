@@ -52,13 +52,13 @@ export function EarningsPanel({
             ) : (
                 <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">ハンド数</div>
+                        <div className="text-white/60">ハンド</div>
                         <div className="mt-1 text-sm font-semibold">
                             {summary?.hands ?? 0}
                         </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">チップ増減</div>
+                        <div className="text-white/60">収支</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
                                 summary?.chips_delta ?? 0
@@ -68,7 +68,7 @@ export function EarningsPanel({
                         </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">収支/100 hand</div>
+                        <div className="text-white/60">収支/100hand</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
                                 per100(
@@ -86,13 +86,13 @@ export function EarningsPanel({
                         </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">69/92配布数</div>
+                        <div className="text-white/60">ハンド (69,92)</div>
                         <div className="mt-1 text-sm font-semibold">
                             {summary?.hands_69_92 ?? 0}
                         </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">69/92チップ</div>
+                        <div className="text-white/60">収支 (69,92)</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
                                 summary?.chips_delta_69_92 ?? 0
@@ -102,9 +102,7 @@ export function EarningsPanel({
                         </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">
-                            69or92収支/100 hand
-                        </div>
+                        <div className="text-white/60">収支/100hand (69,92)</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
                                 per100(

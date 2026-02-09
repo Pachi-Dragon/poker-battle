@@ -56,6 +56,7 @@ gcloud run deploy poker-battle-api \
 - **GOOGLE_CLIENT_ID**: フロントと同じ Google Cloud Console の OAuth 2.0 クライアント ID（トークン検証に使用）
 - **ALLOWED_ORIGINS**（任意）: CORS で許可するオリジン。例: `https://dragonspoker-game.com`（未設定時は `*`）
 - **FIRESTORE_DATABASE**（任意）: Firestore のデータベース ID。未設定時は `dragonspoker-game`。
+- **allowlist**: 認証許可メールはローカルでは `api/data/allows.json`、Cloud Run では Firestore の `allows/allowlist` ドキュメント（`emails` 配列）で管理
 
 デプロイ後に表示される Service URL を、フロントの `NEXT_PUBLIC_API_URL`（ビルド時）に指定します。
 
@@ -78,4 +79,5 @@ API は Cloud Run 上では **Firestore** に成績（earnings）を保存しま
    データベースをデフォルトの `(default)` ではなく別名（例: `dragonspoker-game`）で作成した場合、API はデフォルトで `dragonspoker-game` に接続します。別の ID にしたいときは Cloud Run の環境変数で `FIRESTORE_DATABASE=あなたのDB名` を指定してください。
 
 4. **コレクション**  
-   コードは `earnings` コレクションを使用します。ドキュメントは自動作成されるため、Firestore 側で事前にコレクションを作る必要はありません。
+   - 成績: `earnings` コレクションを使用します。ドキュメントは自動作成されるため、Firestore 側で事前にコレクションを作る必要はありません。  
+   - allowlist: `allows` コレクションの `allowlist` ドキュメントに `emails` 配列を作成してください（手動で追加・更新）
