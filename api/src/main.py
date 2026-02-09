@@ -34,9 +34,12 @@ settlement_gauge_ready: set[str] = set()
 settlement_gauge_timeout_task: asyncio.Task | None = None
 
 # Next.js(フロントエンド)からのアクセスを許可
+# ALLOWED_ORIGINS 未設定時は "*"（開発用）。本番は "https://dragonspoker-game.com" など指定
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "*")
+allow_origins = ["*"] if _allowed_origins == "*" else [o.strip() for o in _allowed_origins.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開発時は"*"でOK。本番はURLを指定
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

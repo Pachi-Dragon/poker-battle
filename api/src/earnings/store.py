@@ -42,7 +42,9 @@ class EarningsStore:
             from google.cloud import firestore
 
             self._firestore = firestore
-            self._firestore_client = firestore.Client()
+            # デフォルトは "(default)"。別名で作成したDBは FIRESTORE_DATABASE で指定
+            database_id = os.getenv("FIRESTORE_DATABASE", "dragonspoker-game")
+            self._firestore_client = firestore.Client(database=database_id)
 
     async def get(self, email: str) -> Dict[str, int]:
         if self._use_firestore:

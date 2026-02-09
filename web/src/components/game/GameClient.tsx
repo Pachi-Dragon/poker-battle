@@ -420,8 +420,11 @@ export function GameClient({
         const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
         const socket = new WebSocket(wsUrl)
         socketRef.current = socket
+        let didOpen = false
 
         socket.addEventListener("open", () => {
+            if (socketRef.current !== socket) return
+            didOpen = true
             setIsDisconnected(false)
             const message: GameMessage<JoinTablePayload> = {
                 type: "joinTable",
@@ -431,10 +434,14 @@ export function GameClient({
         })
 
         socket.addEventListener("close", () => {
+            if (socketRef.current !== socket) return
+            if (!didOpen) return
             setIsDisconnected(true)
         })
 
         socket.addEventListener("error", () => {
+            if (socketRef.current !== socket) return
+            if (!didOpen) return
             setIsDisconnected(true)
         })
 
@@ -1040,6 +1047,7 @@ export function GameClient({
         pendingTimeLimitEnabled === null
             ? `アクション制限時間 ${timeLimitEnabled ? "オン" : "オフ"}`
             : `アクション制限時間 次ハンドから${pendingTimeLimitEnabled ? "オン" : "オフ"}`
+    const canLeaveImmediately = Boolean(heroSeat && tableState?.street === "waiting")
     const leaveButtonLabel = leaveAfterHand ? "離席（次ハンド）" : "離席"
 
     return (
@@ -1283,6 +1291,10 @@ export function GameClient({
                                             : "bg-black/70 text-white/80 hover:bg-black/80"
                                         }`}
                                     onClick={() => {
+                                        if (canLeaveImmediately) {
+                                            handleLeaveAfterHand(true)
+                                            return
+                                        }
                                         setLeaveAfterHand((prev) => {
                                             const nextValue = !prev
                                             handleLeaveAfterHand(nextValue)
