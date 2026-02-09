@@ -293,12 +293,19 @@ async def websocket_game(websocket: WebSocket):
                 await manager.broadcast(
                     table_id, {"type": "tableState", "payload": table_state_payload()}
                 )
+            elif message_type == "setSaveStats":
+                if table.street == Street.waiting and "save_stats" in payload:
+                    table.save_earnings = bool(payload["save_stats"])
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "tableState", "payload": table_state_payload()},
+                    )
             elif message_type == "startHand":
                 if (
                     table.street == Street.waiting
                     and len([s for s in table.seats if s.player_id]) >= 2
                 ):
-                    table.save_earnings = payload.get("save_stats", True)
+                    table.save_earnings = payload.get("save_stats", False)
                     await start_hand_with_delay()
             else:
                 await manager.send(

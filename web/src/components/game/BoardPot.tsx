@@ -7,7 +7,7 @@ interface BoardPotProps {
     table: TableState
     canStart?: boolean
     onStart?: () => void
-    /** 収支を保存するか（false のとき「収支を保存しない」にチェック） */
+    /** 収支を保存するか（「収支を保存する」にチェックで true） */
     saveStats?: boolean
     onSaveStatsChange?: (value: boolean) => void
     /** SB/BB表示用（左隅に SB-BB 1-3 形式で表示） */
@@ -43,7 +43,7 @@ export function BoardPot({
     table,
     canStart = false,
     onStart,
-    saveStats = true,
+    saveStats = false,
     onSaveStatsChange,
     blinds,
     potOverride,
@@ -227,11 +227,11 @@ export function BoardPot({
                             <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
                                 <input
                                     type="checkbox"
-                                    checked={!saveStats}
-                                    onChange={(e) => onSaveStatsChange(!e.target.checked)}
+                                    checked={saveStats}
+                                    onChange={(e) => onSaveStatsChange(e.target.checked)}
                                     className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
                                 />
-                                収支を保存しない
+                                収支を保存する
                             </label>
                         )}
                     </div>

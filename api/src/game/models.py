@@ -70,6 +70,7 @@ class TableState(BaseModel):
     action_history: List[ActionRecord] = Field(default_factory=list)
     current_turn_seat: Optional[int] = None
     hand_number: int = 0
+    save_earnings: bool = False
 
 
 class JoinTablePayload(BaseModel):

@@ -50,6 +50,8 @@ export interface TableState {
     action_history: ActionRecord[]
     current_turn_seat?: number | null
     hand_number: number
+    /** 収支を保存するか（サーバー同期・誰かが変えると全員に反映） */
+    save_earnings?: boolean
 }
 
 export interface JoinTablePayload {

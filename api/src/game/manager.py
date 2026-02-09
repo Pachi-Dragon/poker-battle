@@ -132,7 +132,7 @@ class GameTable:
         self.auto_play_seats: Set[int] = set()
         self.big_blind_seat: Optional[int] = None
         self.pending_payouts: Dict[int, int] = {}
-        self.save_earnings = True
+        self.save_earnings = False
 
     def _seat_positions(self) -> Dict[int, str]:
         occupied = self._occupied_seat_indices()
@@ -1139,6 +1139,7 @@ class GameTable:
             action_history=self.action_history,
             current_turn_seat=self.current_turn_seat,
             hand_number=self.hand_number,
+            save_earnings=self.save_earnings,
         )
 
 
