@@ -1233,6 +1233,10 @@ export function GameClient({
                                         handleLeaveAfterHand(true)
                                         setNextHandDelayMsLeft(0)
                                         nextHandDelayMsLeftRef.current = 0
+                                        setIsWaitPaused(false)
+                                        isWaitPausedRef.current = false
+                                        nextHandDelayLastTickRef.current = Date.now()
+                                        setIsNextHandDelayPending(false)
                                     }}
                                 >
                                     離席

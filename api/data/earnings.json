@@ -1,14 +1,14 @@
 {
   "users": {
     "ryu20241227kana@gmail.com": {
-      "hands": 32,
-      "chips_delta": 900,
+      "hands": 33,
+      "chips_delta": 899,
       "hands_69_92": 1,
       "chips_delta_69_92": -1
     },
     "ryu1114pachi@gmail.com": {
-      "hands": 32,
-      "chips_delta": -900,
+      "hands": 33,
+      "chips_delta": -899,
       "hands_69_92": 0,
       "chips_delta_69_92": 0
     }
