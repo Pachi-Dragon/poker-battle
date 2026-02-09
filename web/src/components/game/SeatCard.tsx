@@ -8,6 +8,7 @@ interface SeatCardProps {
     isCurrentTurn: boolean
     isTopSeat: boolean
     canReserve: boolean
+    showWinner?: boolean
     /** 相手のハンドを表で表示する（ショーダウン時のみ true） */
     showHoleCards?: boolean
     /** Fold決着後のチップ表示を数字のみで出す */
@@ -23,6 +24,7 @@ export function SeatCard({
     isCurrentTurn,
     isTopSeat,
     canReserve,
+    showWinner = false,
     showHoleCards = true,
     chipsOnlyBadge = false,
     chipsOnlyAmount,
@@ -104,13 +106,13 @@ export function SeatCard({
     }, [seat.hole_cards?.length])
 
     return (
-        <div className="flex flex-col items-stretch gap-1">
+        <div className="flex flex-col items-stretch gap-0.5">
             <div
-                className={`relative rounded-xl border px-4 py-3 text-sm shadow ${occupied
-                        ? isDisconnected
-                            ? "bg-slate-800/90 text-white/60 border-white/10"
-                            : "bg-slate-950"
-                        : "bg-slate-950/20"
+                className={`relative rounded-lg border px-2 py-1.5 text-xs shadow ${occupied
+                    ? isDisconnected
+                        ? "bg-slate-800/90 text-white/60 border-white/10"
+                        : "bg-slate-950"
+                    : "bg-slate-950/20"
                     } ${occupied
                         ? isCurrentTurn
                             ? "border-yellow-400"
@@ -118,9 +120,16 @@ export function SeatCard({
                         : "border-white/30 border-dashed"
                     }`}
             >
+                {showWinner && (
+                    <div className="absolute -top-4 left-1/2 -translate-x-1/2">
+                        <span className="inline-flex items-center justify-center rounded-full border border-lime-200 bg-lime-300/90 px-2.5 py-0.5 text-[11px] font-semibold text-slate-900 shadow">
+                            Win
+                        </span>
+                    </div>
+                )}
                 {isDisconnected && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-black/45">
-                        <span className="rounded-md bg-black/70 px-2 py-1 text-base font-semibold text-white">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/45">
+                        <span className="rounded bg-black/70 px-1.5 py-0.5 text-xs font-semibold text-white">
                             接続中
                         </span>
                     </div>
@@ -142,7 +151,7 @@ export function SeatCard({
                         className={`absolute left-1/2 -translate-x-1/2 ${chipPositionClass}`}
                     >
                         <div
-                            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-white/20 py-1 text-sm font-semibold shadow ${numericOnly ? "w-[3.25rem] px-2" : "w-[7rem] px-3"
+                            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-white/20 py-0.5 text-xs font-semibold shadow ${numericOnly ? "w-[2.5rem] px-1.5" : "w-[5.5rem] px-2"
                                 } ${actionToneClass}`}
                         >
                             <span>
@@ -154,12 +163,12 @@ export function SeatCard({
                     </div>
                 )}
                 {occupied && seat.position === "BTN" && (
-                    <span className="absolute -right-3 -top-3 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-[13px] font-bold text-black shadow">
+                    <span className="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-bold text-black shadow">
                         B
                     </span>
                 )}
                 <div className="flex w-full items-center justify-center">
-                    <div className="flex w-full max-w-[calc(100%-0.5rem)] items-center justify-center gap-1.5">
+                    <div className="flex w-full max-w-[calc(100%-0.5rem)] items-center justify-center gap-1">
                         {occupied && seat.hole_cards && seat.hole_cards.length > 0 ? (
                             showHoleCards ? (
                                 seat.hole_cards.map((card, index) => (
@@ -176,7 +185,7 @@ export function SeatCard({
                                 seat.hole_cards.map((_, index) => (
                                     <span
                                         key={`back-${index}`}
-                                        className="inline-flex h-8 w-[45px] shrink-0 items-center justify-center rounded border border-white/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 px-2.5 py-1.5 shadow-inner"
+                                        className="inline-flex h-6 w-[38px] shrink-0 items-center justify-center rounded border border-white/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 px-2 py-1 shadow-inner"
                                         style={{
                                             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.4)",
                                         }}
@@ -187,30 +196,30 @@ export function SeatCard({
                             )
                         ) : (
                             <>
-                                <span className="inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
+                                <span className="inline-flex w-[38px] shrink-0 items-center justify-center rounded border border-white/20 px-2 py-1 text-xs text-white/30">
                                     &nbsp;
                                 </span>
-                                <span className="inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/20 px-2.5 py-1.5 text-xs text-white/30">
+                                <span className="inline-flex w-[38px] shrink-0 items-center justify-center rounded border border-white/20 px-2 py-1 text-xs text-white/30">
                                     &nbsp;
                                 </span>
                             </>
                         )}
                     </div>
                 </div>
-                <div className="mt-2 text-white">
-                    <div className="font-semibold truncate text-center text-[15px] text-white/70 min-h-[1.25rem]">
+                <div className="mt-1 text-white">
+                    <div className="font-medium truncate text-center text-xs text-white/70 min-h-[1rem]">
                         {occupied ? seat.name : "\u00A0"}
                     </div>
-                    <div className="mt-1 flex items-center justify-between min-h-[0.75rem]">
+                    <div className="mt-0.5 flex items-center justify-between min-h-[0.625rem]">
                         <span
-                            className={`inline-flex h-5 min-w-[2rem] items-center justify-center rounded-full px-2 text-sm font-semibold leading-none ${occupied
+                            className={`inline-flex h-4 min-w-[1.75rem] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none ${occupied
                                 ? "bg-orange-700/90 text-white"
                                 : "bg-orange-700/20 text-transparent"
                                 }`}
                         >
                             {occupied ? seat.position : "\u00A0"}
                         </span>
-                        <span className="inline-flex h-5 items-center text-base font-semibold leading-none text-white">
+                        <span className="inline-flex h-4 items-center text-xs font-semibold leading-none text-white">
                             {occupied ? seat.stack : "\u00A0"}
                         </span>
                     </div>

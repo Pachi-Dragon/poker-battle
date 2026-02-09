@@ -8,7 +8,13 @@ from google.auth.transport import requests
 from dotenv import load_dotenv
 
 from .game.manager import ConnectionManager, GameTable
-from .game.models import ActionPayload, JoinTablePayload, ReserveSeatPayload, Street
+from .game.models import (
+    ActionPayload,
+    JoinTablePayload,
+    ReserveSeatPayload,
+    RevealHandPayload,
+    Street,
+)
 
 # .envファイルを読み込む
 load_dotenv()
@@ -17,6 +23,7 @@ app = FastAPI()
 manager = ConnectionManager()
 table = GameTable(table_id="default")
 HAND_DELAY_SECONDS = 1.0
+RUNOUT_DELAY_SECONDS = 1.6
 LEAVE_GRACE_SECONDS = 30.0
 GAUGE_COMPLETE_TIMEOUT_SECONDS = 30.0
 pending_leave_tasks: dict[str, asyncio.Task] = {}
@@ -147,21 +154,7 @@ async def websocket_game(websocket: WebSocket):
     async def wait_for_all_gauges_then_start_hand() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
         settlement_gauge_ready = set()
-
-        async def timeout_start() -> None:
-            await asyncio.sleep(GAUGE_COMPLETE_TIMEOUT_SECONDS)
-            if table.street == Street.settlement:
-                settlement_gauge_ready.clear()
-                table.apply_pending_payouts()
-                table._finalize_pending_leaves()
-                table._finalize_leave_after_hand()
-                table.start_new_hand()
-                await manager.broadcast(
-                    table_id,
-                    {"type": "handState", "payload": table_state_payload()},
-                )
-
-        settlement_gauge_timeout_task = asyncio.create_task(timeout_start())
+        settlement_gauge_timeout_task = None
 
     async def check_gauge_complete_and_start() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
@@ -235,6 +228,14 @@ async def websocket_game(websocket: WebSocket):
                     table_id,
                     {"type": "tableState", "payload": table_state_payload()},
                 )
+                while table.should_auto_runout():
+                    await asyncio.sleep(RUNOUT_DELAY_SECONDS)
+                    if not table.advance_auto_runout():
+                        break
+                    await manager.broadcast(
+                        table_id,
+                        {"type": "tableState", "payload": table_state_payload()},
+                    )
                 # ハンド終了（settlement）後は全プレイヤーのゲージが0になるまで待ってから次のハンドを開始
                 if (
                     table.street == Street.settlement
@@ -246,11 +247,23 @@ async def websocket_game(websocket: WebSocket):
                 if player_id and table.street == Street.settlement:
                     settlement_gauge_ready.add(player_id)
                     await check_gauge_complete_and_start()
+            elif message_type == "revealHand":
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    data = RevealHandPayload(player_id=player_id)
+                    if table.record_hand_reveal(data.player_id):
+                        await manager.broadcast(
+                            table_id,
+                            {"type": "tableState", "payload": table_state_payload()},
+                        )
             elif message_type == "syncState":
                 await manager.send(
                     websocket,
                     {"type": "tableState", "payload": table_state_payload()},
                 )
+            elif message_type == "heartbeat":
+                # Cloud Run keep-alive: no-op
+                pass
             elif message_type == "reserveSeat":
                 data = ReserveSeatPayload(**payload)
                 table.reserve_seat(data.player_id, data.name, data.seat_index)

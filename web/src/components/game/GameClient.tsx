@@ -14,6 +14,7 @@ import { ActionControls } from "./ActionControls"
 import { ActionHistory } from "./ActionHistory"
 import { BoardPot } from "./BoardPot"
 import { SeatCard } from "./SeatCard"
+import { getHandLabel } from "@/lib/game/handRank"
 
 interface GameClientProps {
     player: JoinTablePayload
@@ -51,9 +52,13 @@ export function GameClient({
     const streetTransitionDelayMs = 650
     const nextHandDelayMs = 5000
     const revealToGaugeDelayMs = 1000
+    const actionControlsDelayMs = 400
+    const heartbeatIntervalMs = 25000
     const socketRef = useRef<WebSocket | null>(null)
     const actionControlsRef = useRef<HTMLDivElement | null>(null)
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+    const [isDisconnected, setIsDisconnected] = useState(false)
+    const [reconnectToken, setReconnectToken] = useState(0)
     const [actionControlsHeight, setActionControlsHeight] = useState<number | null>(
         null
     )
@@ -73,20 +78,66 @@ export function GameClient({
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const [isWaitPaused, setIsWaitPaused] = useState(false)
     const isWaitPausedRef = useRef(false)
+    const [actionControlsEnabled, setActionControlsEnabled] = useState(true)
     const nextHandDelayMsLeftRef = useRef(0)
     const nextHandDelayLastTickRef = useRef<number | null>(null)
     const [revealOpponents, setRevealOpponents] = useState(false)
     const [revealByUser, setRevealByUser] = useState(false)
     const revealCompletedAtRef = useRef<number | null>(null)
     const nextHandStartTimeoutRef = useRef<number | null>(null)
+    const gaugeScheduledHandRef = useRef<number | null>(null)
     const frozenBlindsRef = useRef<{ sb: number; bb: number } | null>(null)
     const lastProcessedActionIndexRef = useRef(0)
     const foldOverrideTimeoutsRef = useRef<Map<number, number>>(new Map())
     const prevStreetRef = useRef<TableState["street"] | null>(null)
     const prevHandNumberRef = useRef<number | null>(null)
+    const heartbeatTimeoutRef = useRef<number | null>(null)
+    const actionControlsDelayTimeoutRef = useRef<number | null>(null)
     const [seatActionOverrides, setSeatActionOverrides] = useState<
         Record<number, { mode: "chips" | "hide"; amount?: number }>
     >({})
+
+    const scheduleHeartbeat = () => {
+        if (heartbeatTimeoutRef.current) {
+            window.clearTimeout(heartbeatTimeoutRef.current)
+        }
+        heartbeatTimeoutRef.current = window.setTimeout(() => {
+            sendMessage({
+                type: "heartbeat",
+                payload: { player_id: player.player_id },
+            })
+        }, heartbeatIntervalMs)
+    }
+
+    const sendMessage = (message: { type: string; payload?: unknown }) => {
+        const socket = socketRef.current
+        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify(message))
+        scheduleHeartbeat()
+    }
+
+    const handleReconnect = () => {
+        const socket = socketRef.current
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            socket.close()
+        }
+        setReconnectToken((prev) => prev + 1)
+    }
+
+    const handleNextHandDelayToggle = () => {
+        if (isWaitPaused) {
+            // NEXT: move gauge to 0 immediately
+            isWaitPausedRef.current = false
+            setIsWaitPaused(false)
+            nextHandDelayLastTickRef.current = Date.now()
+            nextHandDelayMsLeftRef.current = 0
+            setNextHandDelayMsLeft(0)
+            return
+        }
+        // STOP
+        isWaitPausedRef.current = true
+        setIsWaitPaused(true)
+    }
 
     const buildStateWithStreetActions = (
         state: TableState,
@@ -168,15 +219,26 @@ export function GameClient({
     }
 
     const sendNextHandGaugeComplete = () => {
-        const socket = socketRef.current
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(
-                JSON.stringify({
-                    type: "nextHandGaugeComplete",
-                    payload: { player_id: player.player_id },
-                })
-            )
+        sendMessage({
+            type: "nextHandGaugeComplete",
+            payload: { player_id: player.player_id },
+        })
+    }
+
+    const clearActionControlsDelay = () => {
+        if (actionControlsDelayTimeoutRef.current) {
+            window.clearTimeout(actionControlsDelayTimeoutRef.current)
+            actionControlsDelayTimeoutRef.current = null
         }
+    }
+
+    const scheduleActionControlsReveal = (delayMs: number) => {
+        clearActionControlsDelay()
+        setActionControlsEnabled(false)
+        actionControlsDelayTimeoutRef.current = window.setTimeout(() => {
+            actionControlsDelayTimeoutRef.current = null
+            setActionControlsEnabled(true)
+        }, delayMs)
     }
 
     const startNextHandDelay = (
@@ -294,11 +356,20 @@ export function GameClient({
         socketRef.current = socket
 
         socket.addEventListener("open", () => {
+            setIsDisconnected(false)
             const message: GameMessage<JoinTablePayload> = {
                 type: "joinTable",
                 payload: player,
             }
-            socket.send(JSON.stringify(message))
+            sendMessage(message)
+        })
+
+        socket.addEventListener("close", () => {
+            setIsDisconnected(true)
+        })
+
+        socket.addEventListener("error", () => {
+            setIsDisconnected(true)
         })
 
         socket.addEventListener("message", (event) => {
@@ -315,6 +386,17 @@ export function GameClient({
                     return
                 }
                 if (isNextHandDelayActiveRef.current) {
+                    const hasRevealUpdate = Boolean(
+                        nextState.action_history?.some(
+                            (action) => action.action?.toLowerCase() === "hand_reveal"
+                        )
+                    )
+                    if (hasRevealUpdate) {
+                        const display = buildDisplayState(nextState, tableStateRef.current)
+                        displayStateDuringGaugeRef.current = display
+                        setTableState(display)
+                        return
+                    }
                     if (prevState.hand_number !== nextState.hand_number) {
                         pendingNextHandRef.current = nextState
                     }
@@ -358,10 +440,19 @@ export function GameClient({
                 if (shouldDelayStreetChange) {
                     isAnimatingRef.current = true
                     pendingStateRef.current = sanitizedNextState
+                    if (["flop", "turn", "river"].includes(sanitizedNextState.street)) {
+                        scheduleActionControlsReveal(
+                            streetTransitionDelayMs + actionControlsDelayMs
+                        )
+                    } else {
+                        clearActionControlsDelay()
+                        setActionControlsEnabled(true)
+                    }
                     const displayState = buildStateWithStreetActions(
                         {
                             ...prevState,
                             action_history: sanitizedNextState.action_history,
+                            current_turn_seat: sanitizedNextState.current_turn_seat,
                         },
                         prevState.street
                     )
@@ -377,6 +468,8 @@ export function GameClient({
                     }, streetTransitionDelayMs)
                     return
                 }
+                clearActionControlsDelay()
+                setActionControlsEnabled(true)
                 setTableState(
                     buildDisplayState(sanitizedNextState, prevState)
                 )
@@ -384,9 +477,13 @@ export function GameClient({
         })
 
         return () => {
+            if (heartbeatTimeoutRef.current) {
+                window.clearTimeout(heartbeatTimeoutRef.current)
+                heartbeatTimeoutRef.current = null
+            }
             socket.close()
         }
-    }, [apiUrl, player.player_id, player.name])
+    }, [apiUrl, player.player_id, player.name, reconnectToken])
 
     useEffect(() => {
         tableStateRef.current = tableState
@@ -430,6 +527,8 @@ export function GameClient({
         }
         if (lastAppliedHandRef.current === tableState.hand_number) return
         lastAppliedHandRef.current = tableState.hand_number
+        gaugeScheduledHandRef.current = null
+        clearNextHandDelayTimers()
         setRevealByUser(false)
         if (pendingTimeLimitEnabled !== null) {
             setTimeLimitEnabled(pendingTimeLimitEnabled)
@@ -438,6 +537,16 @@ export function GameClient({
             setPendingTimeLimitEnabled(null)
         }
     }, [tableState?.hand_number, timeLimitMs, pendingTimeLimitEnabled])
+
+    useEffect(() => {
+        if (!tableState) return
+        if (
+            isNextHandDelayActiveRef.current &&
+            !["settlement", "showdown"].includes(tableState.street)
+        ) {
+            clearNextHandDelayTimers()
+        }
+    }, [tableState?.street, tableState?.hand_number])
 
     useEffect(() => {
         isWaitPausedRef.current = isWaitPaused
@@ -462,6 +571,7 @@ export function GameClient({
             foldOverrideTimeoutsRef.current.clear()
             frozenBlindsRef.current = null
             revealCompletedAtRef.current = null
+            clearActionControlsDelay()
         }
     }, [])
 
@@ -490,6 +600,27 @@ export function GameClient({
             ),
         [tableState?.action_history]
     )
+    const hasHandReveal = useMemo(
+        () =>
+            Boolean(
+                tableState?.action_history?.some(
+                    (action) => action.action?.toLowerCase() === "hand_reveal"
+                )
+            ),
+        [tableState?.action_history]
+    )
+    const hasHandRevealFromOther = useMemo(
+        () =>
+            Boolean(
+                tableState?.action_history?.some(
+                    (action) =>
+                        action.action?.toLowerCase() === "hand_reveal" &&
+                        action.actor_id &&
+                        action.actor_id !== player.player_id
+                )
+            ),
+        [tableState?.action_history, player.player_id]
+    )
     const isWaitingPlayer = Boolean(tableState && !heroSeat)
     const isHeroTurn = Boolean(
         tableState &&
@@ -498,6 +629,7 @@ export function GameClient({
         tableState.current_turn_seat !== undefined &&
         tableState.current_turn_seat === heroSeat.seat_index
     )
+    const isHeroTurnReady = isHeroTurn && actionControlsEnabled
     const canStartHand = Boolean(
         tableState &&
         tableState.street === "waiting" &&
@@ -546,7 +678,10 @@ export function GameClient({
                 !isNextHandDelayActiveRef.current &&
                 !nextHandStartTimeoutRef.current
             ) {
-                scheduleNextHandDelay(pendingNextHandRef.current, revealToGaugeDelayMs)
+                if (gaugeScheduledHandRef.current !== tableState.hand_number) {
+                    gaugeScheduledHandRef.current = tableState.hand_number
+                    scheduleNextHandDelay(pendingNextHandRef.current, revealToGaugeDelayMs)
+                }
             }
             return
         }
@@ -558,6 +693,30 @@ export function GameClient({
                     !isNextHandDelayActiveRef.current &&
                     !nextHandStartTimeoutRef.current
                 ) {
+                    if (gaugeScheduledHandRef.current !== tableState.hand_number) {
+                        gaugeScheduledHandRef.current = tableState.hand_number
+                        if (pendingNextHandRef.current) {
+                            scheduleNextHandDelay(
+                                pendingNextHandRef.current,
+                                revealToGaugeDelayMs
+                            )
+                        } else {
+                            scheduleNextHandDelay(tableState, revealToGaugeDelayMs, {
+                                onGaugeComplete: sendNextHandGaugeComplete,
+                            })
+                        }
+                    }
+                }
+                return
+            }
+            revealCompletedAtRef.current = Date.now()
+            setRevealOpponents(hasHandRevealFromOther)
+            if (
+                !isNextHandDelayActiveRef.current &&
+                !nextHandStartTimeoutRef.current
+            ) {
+                if (gaugeScheduledHandRef.current !== tableState.hand_number) {
+                    gaugeScheduledHandRef.current = tableState.hand_number
                     if (pendingNextHandRef.current) {
                         scheduleNextHandDelay(
                             pendingNextHandRef.current,
@@ -569,33 +728,18 @@ export function GameClient({
                         })
                     }
                 }
-                return
             }
-            revealCompletedAtRef.current = Date.now()
-            setRevealOpponents(false)
-            if (
-                !isNextHandDelayActiveRef.current &&
-                !nextHandStartTimeoutRef.current
-            ) {
-                if (pendingNextHandRef.current) {
-                    scheduleNextHandDelay(
-                        pendingNextHandRef.current,
-                        revealToGaugeDelayMs
-                    )
-                } else {
-                    scheduleNextHandDelay(tableState, revealToGaugeDelayMs, {
-                        onGaugeComplete: sendNextHandGaugeComplete,
-                    })
-                }
-            }
-            return
-        }
-        if (revealByUser && hasShowdown) {
-            setRevealOpponents(true)
             return
         }
         setRevealOpponents(false)
-    }, [tableState?.hand_number, tableState?.street, hasShowdown, revealByUser])
+    }, [
+        tableState?.hand_number,
+        tableState?.street,
+        hasShowdown,
+        hasHandReveal,
+        hasHandRevealFromOther,
+        revealByUser,
+    ])
 
     useEffect(() => {
         if (!tableState) return
@@ -611,6 +755,8 @@ export function GameClient({
             setSeatActionOverrides({})
             lastProcessedActionIndexRef.current =
                 tableState.action_history?.length ?? 0
+            clearActionControlsDelay()
+            setActionControlsEnabled(true)
         }
         prevStreetRef.current = currentStreet
         prevHandNumberRef.current = currentHand
@@ -661,7 +807,7 @@ export function GameClient({
             window.clearInterval(timerRef.current)
             timerRef.current = null
         }
-        if (!timeLimitEnabled || !isHeroTurn) {
+        if (!timeLimitEnabled || !isHeroTurnReady) {
             setTimeLeftMs(timeLimitMs)
             setForceAllFold(false)
             return
@@ -689,7 +835,7 @@ export function GameClient({
         }
     }, [
         timeLimitEnabled,
-        isHeroTurn,
+        isHeroTurnReady,
         timeLimitMs,
         tableState?.hand_number,
         tableState?.street,
@@ -697,21 +843,14 @@ export function GameClient({
     ])
 
     const handleAction = (payload: ActionPayload) => {
-        const socket = socketRef.current
-        if (!socket || socket.readyState !== WebSocket.OPEN) return
-        socket.send(JSON.stringify({ type: "action", payload }))
+        sendMessage({ type: "action", payload })
     }
 
     const handleLeave = () => {
-        const socket = socketRef.current
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(
-                JSON.stringify({
-                    type: "leaveTable",
-                    payload: { player_id: player.player_id },
-                })
-            )
-        }
+        sendMessage({
+            type: "leaveTable",
+            payload: { player_id: player.player_id },
+        })
         if (embeddedInHome && onBackToHome) {
             onBackToHome()
         } else {
@@ -720,60 +859,58 @@ export function GameClient({
     }
 
     const handleReset = () => {
-        const socket = socketRef.current
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: "resetTable" }))
-        }
+        sendMessage({ type: "resetTable" })
     }
 
     const handleReserveSeat = (seatIndex: number) => {
-        const socket = socketRef.current
-        if (!socket || socket.readyState !== WebSocket.OPEN) return
         const payload: ReserveSeatPayload = {
             player_id: player.player_id,
             name: player.name,
             seat_index: seatIndex,
         }
-        socket.send(JSON.stringify({ type: "reserveSeat", payload }))
+        sendMessage({ type: "reserveSeat", payload })
     }
 
     const handleStartHand = () => {
-        const socket = socketRef.current
-        if (!socket || socket.readyState !== WebSocket.OPEN) return
-        socket.send(JSON.stringify({ type: "startHand" }))
+        sendMessage({ type: "startHand" })
+    }
+
+    const handleRevealHand = () => {
+        setRevealByUser(true)
+        sendMessage({
+            type: "revealHand",
+            payload: { player_id: player.player_id },
+        })
     }
 
     const handleLeaveAfterHand = (nextValue: boolean) => {
-        const socket = socketRef.current
-        if (!socket || socket.readyState !== WebSocket.OPEN) return
-        socket.send(
-            JSON.stringify({
-                type: nextValue ? "leaveAfterHand" : "cancelLeaveAfterHand",
-                payload: { player_id: player.player_id },
-            })
-        )
+        sendMessage({
+            type: nextValue ? "leaveAfterHand" : "cancelLeaveAfterHand",
+            payload: { player_id: player.player_id },
+        })
     }
 
-    const seatPositions = [
-        "top-1 left-1/2 -translate-x-1/2",
-        "top-[18%] right-2 -translate-y-1/2",
-        "bottom-[18%] right-2 translate-y-1/2",
-        "bottom-1 left-1/2 -translate-x-1/2",
-        "bottom-[18%] left-2 translate-y-1/2",
-        "top-[18%] left-2 -translate-y-1/2",
+    // マット中央(50%,50%)を基準に6席を楕円上に配置（全席ボード寄り、横4席は外側）
+    const seatPositionStyles: Array<{ left: string; top: string }> = [
+        { left: "50%", top: "20%" },   // 上中央
+        { left: "84%", top: "28%" },   // 右上
+        { left: "84%", top: "72%" },   // 右下
+        { left: "50%", top: "80%" },   // 下中央
+        { left: "16%", top: "72%" },   // 左下
+        { left: "16%", top: "28%" },   // 左上
     ]
 
-    const getSeatPosition = (seatIndex: number) => {
+    const getSeatPositionStyle = (seatIndex: number) => {
         const heroIndex = heroSeat?.seat_index ?? 0
         const posIndex = (seatIndex - heroIndex + 3 + 6) % 6
-        return seatPositions[posIndex]
+        return seatPositionStyles[posIndex]
     }
 
     const timeGaugePercent = timeLimitEnabled && isHeroTurn
         ? Math.max(0, Math.min(100, (timeLeftMs / timeLimitMs) * 100))
         : 0
     const timeLeftSeconds = Math.max(0, Math.ceil(timeLeftMs / 1000))
-    const showActionTimer = Boolean(timeLimitEnabled && isHeroTurn)
+    const showActionTimer = Boolean(timeLimitEnabled && isHeroTurnReady)
     const nextHandDelayPercent = Math.max(
         0,
         Math.min(100, (nextHandDelayMsLeft / nextHandDelayMs) * 100)
@@ -790,6 +927,34 @@ export function GameClient({
         isNextHandDelayActive && displayStateDuringGaugeRef.current
             ? displayStateDuringGaugeRef.current
             : tableState
+    const winnerIds = useMemo(() => {
+        if (!displayTableState) return new Set<string>()
+        if (!["showdown", "settlement"].includes(displayTableState.street)) {
+            return new Set<string>()
+        }
+        const payouts = displayTableState.action_history?.filter(
+            (action) => action.action?.toLowerCase() === "payout" && action.actor_id
+        )
+        return new Set<string>(payouts?.map((action) => action.actor_id as string))
+    }, [displayTableState])
+    const winnerHandLabels = useMemo(() => {
+        const labels = new Map<number, string>()
+        if (!displayTableState) return labels
+        if (!["showdown", "settlement"].includes(displayTableState.street)) {
+            return labels
+        }
+        if (displayTableState.board.length < 5) return labels
+        displayTableState.seats.forEach((seat) => {
+            if (!seat.player_id) return
+            if (!winnerIds.has(seat.player_id)) return
+            if (!seat.hole_cards || seat.hole_cards.length < 2) return
+            const label = getHandLabel(seat.hole_cards, displayTableState.board)
+            if (label) {
+                labels.set(seat.seat_index, label)
+            }
+        })
+        return labels
+    }, [displayTableState, winnerIds])
     const isFoldedSettlement =
         displayTableState?.street === "settlement" && !hasShowdown
     const potOverride =
@@ -804,9 +969,7 @@ export function GameClient({
             ? lastFoldStreetRef.current.street
             : null
     const hideActionAmounts =
-        isFoldedSettlement &&
-        !isNextHandDelayActive &&
-        !nextHandStartTimeoutRef.current
+        false
     const timeLimitButtonLabel =
         pendingTimeLimitEnabled === null
             ? `アクション制限時間 ${timeLimitEnabled ? "オン" : "オフ"}`
@@ -841,9 +1004,31 @@ export function GameClient({
                         : "flex min-h-[calc(100vh-64px)] flex-col px-4 pb-4"
                 }
             >
+                {isDisconnected && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+                        <div className="w-full max-w-xs rounded-2xl border border-white/20 bg-slate-950 p-5 text-center shadow-xl">
+                            <div className="text-sm font-semibold text-white">
+                                接続が切れました
+                            </div>
+                            <div className="mt-1 text-xs text-white/70">
+                                再接続してください
+                            </div>
+                            <button
+                                type="button"
+                                className="mt-4 w-full rounded-full bg-amber-400/90 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-amber-300"
+                                onClick={handleReconnect}
+                            >
+                                再接続
+                            </button>
+                        </div>
+                    </div>
+                )}
                 <div className="relative mx-auto mt-2 w-full max-w-sm flex-1 sm:max-w-md">
-                    <div className="absolute inset-x-4 inset-y-8 rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
-                    <div className="relative mx-auto aspect-[4/5] w-full pt-6">
+                    {/* 高さ確保用（マット・席・ボードは absolute でこの上に重なる） */}
+                    <div className="aspect-[4/5] w-full" aria-hidden="true" />
+                    <div className="absolute inset-x-4 inset-y-[3.5rem] rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
+                    {/* 席はマットと同じコンテナで中央基準に配置 */}
+                    <div className="absolute inset-0">
                         {displayTableState?.seats.map((seat) => {
                             const override = seatActionOverrides[seat.seat_index]
                             const heroIndex = heroSeat?.seat_index ?? 0
@@ -851,10 +1036,12 @@ export function GameClient({
                                 (seat.seat_index - heroIndex + 3 + 6) % 6
                             const isTopSeat =
                                 posIndex === 0 || posIndex === 1 || posIndex === 5
+                            const pos = getSeatPositionStyle(seat.seat_index)
                             return (
                                 <div
                                     key={seat.seat_index}
-                                    className={`absolute w-28 sm:w-32 ${getSeatPosition(seat.seat_index)}`}
+                                    className="absolute w-24 sm:w-28 -translate-x-1/2 -translate-y-1/2"
+                                    style={{ left: pos.left, top: pos.top }}
                                 >
                                     <SeatCard
                                         seat={seat}
@@ -864,6 +1051,11 @@ export function GameClient({
                                         }
                                         isTopSeat={isTopSeat}
                                         canReserve={isWaitingPlayer && !seat.player_id}
+                                        showWinner={
+                                            Boolean(
+                                                seat.player_id && winnerIds.has(seat.player_id)
+                                            )
+                                        }
                                         showHoleCards={
                                             heroSeat?.seat_index === seat.seat_index ||
                                             revealOpponents
@@ -882,7 +1074,10 @@ export function GameClient({
                                     Loading seats...
                                 </div>
                             )}
-                        <div className="absolute left-1/2 top-[50%] w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px]">
+                    </div>
+                    {/* ボードはマットと同じコンテナ基準で中央に配置（端末差を防ぐ） */}
+                    <div className="absolute left-1/2 top-1/2 w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px] pointer-events-none">
+                        <div className="pointer-events-auto">
                             {displayTableState && (
                                 <BoardPot
                                     table={displayTableState}
@@ -897,7 +1092,7 @@ export function GameClient({
                     </div>
                 </div>
 
-                <div className="mt-3 relative">
+                <div className="relative pb-14 mt-2">
                     {(isNextHandDelayActive || showActionTimer) && (
                         <div className="absolute left-0 right-0 -top-10 z-10 flex flex-col items-center">
                             <div className="flex w-full max-w-sm items-center justify-center gap-2">
@@ -917,31 +1112,6 @@ export function GameClient({
                                             : timeLeftSeconds}
                                     </div>
                                 </div>
-                                {isNextHandDelayActive && (
-                                    <button
-                                        type="button"
-                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${isWaitPaused
-                                                ? "bg-white/20 text-white/80 hover:bg-white/30"
-                                                : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                            }`}
-                                        onClick={() => setIsWaitPaused((prev) => !prev)}
-                                    >
-                                        {isWaitPaused ? "待ってない" : "待った"}
-                                    </button>
-                                )}
-                                {isNextHandDelayActive && hasShowdown && (
-                                    <button
-                                        type="button"
-                                        className={`min-w-[6rem] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold ${revealByUser
-                                                ? "bg-emerald-300 text-slate-900"
-                                                : "bg-emerald-400/90 text-slate-900 hover:bg-emerald-300"
-                                            }`}
-                                        onClick={() => setRevealByUser(true)}
-                                        disabled={revealByUser}
-                                    >
-                                        ハンド表示
-                                    </button>
-                                )}
                             </div>
                         </div>
                     )}
@@ -952,13 +1122,41 @@ export function GameClient({
                             maxHeight={actionControlsHeight}
                             hideAmounts={hideActionAmounts}
                         />
-                        <div ref={actionControlsRef} className="shrink-0 self-start">
-                            <ActionControls
-                                table={tableState}
-                                playerId={player.player_id}
-                                onAction={handleAction}
-                                forceAllFold={forceAllFold}
-                            />
+                        <div className="relative shrink-0 self-start">
+                            <div ref={actionControlsRef}>
+                                <ActionControls
+                                    table={tableState}
+                                    playerId={player.player_id}
+                                    onAction={handleAction}
+                                    forceAllFold={forceAllFold}
+                                    interactionEnabled={actionControlsEnabled}
+                                />
+                            </div>
+                            <div className="absolute right-0 top-0 -translate-y-full -mt-1 mb-1 flex flex-col gap-1">
+                                {isNextHandDelayActive && (
+                                    <button
+                                        type="button"
+                                        className={`min-w-[5rem] rounded-md px-3 py-1.5 text-xs font-semibold ${isWaitPaused
+                                                ? "bg-white/20 text-white/80 hover:bg-white/30"
+                                                : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                            }`}
+                                        onClick={handleNextHandDelayToggle}
+                                    >
+                                        {isWaitPaused ? "NEXT" : "STOP"}
+                                    </button>
+                                )}
+                                {tableState?.street === "settlement" &&
+                                    !hasShowdown &&
+                                    !revealByUser && (
+                                    <button
+                                        type="button"
+                                        className="min-w-[7rem] rounded-md px-3 py-1.5 text-xs font-semibold bg-emerald-400/90 text-slate-900 hover:bg-emerald-300"
+                                        onClick={handleRevealHand}
+                                    >
+                                        ハンドを公開する
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -983,17 +1181,6 @@ export function GameClient({
                         <div className="flex flex-col gap-2 pt-4">
                             <button
                                 type="button"
-                                className="rounded bg-slate-700/80 px-3 py-2 text-sm font-semibold text-white/90 hover:bg-slate-600/80"
-                                onClick={() => {
-                                    handleReset()
-                                    setIsMenuOpen(false)
-                                }}
-                                disabled={!tableState}
-                            >
-                                リセット
-                            </button>
-                            <button
-                                type="button"
                                 className={`rounded px-3 py-2 text-sm font-semibold ${(pendingTimeLimitEnabled ?? timeLimitEnabled)
                                         ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
                                         : "bg-black/70 text-white/80 hover:bg-black/80"
@@ -1011,23 +1198,37 @@ export function GameClient({
                             >
                                 {timeLimitButtonLabel}
                             </button>
-                            <button
-                                type="button"
-                                className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${leaveAfterHand
-                                        ? "bg-red-800/70 hover:bg-red-700/70"
-                                        : "bg-black/70 text-white/80 hover:bg-black/80"
-                                    }`}
-                                onClick={() => {
-                                    setLeaveAfterHand((prev) => {
-                                        const nextValue = !prev
-                                        handleLeaveAfterHand(nextValue)
-                                        return nextValue
-                                    })
-                                }}
-                                disabled={!tableState}
-                            >
-                                {leaveButtonLabel}
-                            </button>
+                            {heroSeat ? (
+                                <button
+                                    type="button"
+                                    className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${leaveAfterHand
+                                            ? "bg-red-800/70 hover:bg-red-700/70"
+                                            : "bg-black/70 text-white/80 hover:bg-black/80"
+                                        }`}
+                                    onClick={() => {
+                                        setLeaveAfterHand((prev) => {
+                                            const nextValue = !prev
+                                            handleLeaveAfterHand(nextValue)
+                                            return nextValue
+                                        })
+                                    }}
+                                    disabled={!tableState}
+                                >
+                                    {leaveButtonLabel}
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="rounded bg-black/70 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-black/80"
+                                    onClick={() => {
+                                        handleLeave()
+                                        setIsMenuOpen(false)
+                                    }}
+                                    disabled={!tableState}
+                                >
+                                    離席
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

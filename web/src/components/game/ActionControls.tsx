@@ -9,6 +9,7 @@ interface ActionControlsProps {
     onAction: (payload: ActionPayload) => void
     className?: string
     forceAllFold?: boolean
+    interactionEnabled?: boolean
 }
 
 function getActionButtonClass(action: ActionType) {
@@ -25,9 +26,10 @@ function getCheckCallButton(opts: {
     canCheck: boolean
     canCall: boolean
     toCall: number
+    callAmount: number
 }): { label: string; action: ActionType } | null {
     if (opts.canCheck) return { label: "Check", action: "check" }
-    if (opts.canCall) return { label: `Call ${opts.toCall}`, action: "call" }
+    if (opts.canCall) return { label: `Call ${opts.callAmount}`, action: "call" }
     return null
 }
 
@@ -56,8 +58,10 @@ export function ActionControls({
     onAction,
     className = "",
     forceAllFold = false,
+    interactionEnabled = true,
 }: ActionControlsProps) {
     const [betSize, setBetSize] = useState(3)
+    const [amountOverlayOpen, setAmountOverlayOpen] = useState(false)
     const [allFoldEnabled, setAllFoldEnabled] = useState(false)
     const [allFoldCheckedThisStreet, setAllFoldCheckedThisStreet] = useState(false)
     const forcedByTimerRef = useRef(false)
@@ -70,6 +74,7 @@ export function ActionControls({
             return false
         return seat.seat_index === table.current_turn_seat
     }, [table, playerId])
+    const isTurnReady = isTurn && interactionEnabled
     const seat = useMemo(() => {
         if (!table) return null
         return table.seats.find((item) => item.player_id === playerId) ?? null
@@ -79,14 +84,27 @@ export function ActionControls({
         return Math.max(0, table.current_bet - seat.street_commit)
     }, [table, seat])
     const canCheck = Boolean(table && seat && toCall === 0)
-    const canCall = Boolean(table && seat && toCall > 0)
+    const callAmount = Math.max(0, Math.min(toCall, seat?.stack ?? 0))
+    const canCall = Boolean(table && seat && toCall > 0 && callAmount > 0)
+    const hasNonAllInOpponent = Boolean(
+        table &&
+        seat &&
+        table.seats.some(
+            (other) =>
+                other.player_id &&
+                other.seat_index !== seat.seat_index &&
+                !other.is_folded &&
+                !other.is_all_in
+        )
+    )
     const canBet = Boolean(table && seat && table.current_bet === 0)
     const canRaise = Boolean(
         table &&
         seat &&
         table.current_bet > 0 &&
         !seat.raise_blocked &&
-        seat.stack + seat.street_commit > table.current_bet
+        seat.stack + seat.street_commit > table.current_bet &&
+        hasNonAllInOpponent
     )
     const canAllIn = Boolean(canBet || canRaise)
     const rawMin = table
@@ -103,7 +121,8 @@ export function ActionControls({
         !seat.is_folded &&
         !isTurn &&
         table.current_turn_seat !== null &&
-        ["preflop", "flop", "turn", "river"].includes(table.street)
+        ["preflop", "flop", "turn", "river"].includes(table.street) &&
+        interactionEnabled
     )
 
     const effectiveBetSize = useMemo(
@@ -125,6 +144,7 @@ export function ActionControls({
 
     const handleAmountAction = (action: ActionType) => {
         const amount = action === "all-in" ? undefined : effectiveBetSize
+        setAmountOverlayOpen(false)
         onAction({
             player_id: playerId,
             action,
@@ -132,7 +152,7 @@ export function ActionControls({
         })
     }
 
-    const betRaiseButton = isTurn && getBetRaiseAllInButton({
+    const betRaiseButton = isTurnReady && getBetRaiseAllInButton({
         canBet,
         canRaise,
         canAllIn,
@@ -140,7 +160,9 @@ export function ActionControls({
         allInSize: (seat?.stack ?? 0) + (seat?.street_commit ?? 0),
     })
 
-    const checkCallBtn = isTurn ? getCheckCallButton({ canCheck, canCall, toCall }) : null
+    const checkCallBtn = isTurnReady
+        ? getCheckCallButton({ canCheck, canCall, toCall, callAmount })
+        : null
 
     const betQuickPercents = [10, 25, 33, 50, 67, 75, 100, 125, 150, 200, 250, 300]
     const raiseQuickMultipliers = [2, 2.5, 3, 3.5, 4, 5]
@@ -172,7 +194,7 @@ export function ActionControls({
     }, [forceAllFold])
 
     useEffect(() => {
-        if (!allFoldEnabled || !isTurn || !table) return
+        if (!allFoldEnabled || !isTurnReady || !table) return
         const key = `${table.hand_number}-${table.street}-${toCall}-${table.current_bet}`
         if (lastAutoActionRef.current === key) return
         if (toCall === 0) {
@@ -184,10 +206,16 @@ export function ActionControls({
         lastAutoActionRef.current = key
     }, [allFoldEnabled, isTurn, table, toCall, playerId, onAction])
 
+    useEffect(() => {
+        if (!isTurnReady) {
+            setAmountOverlayOpen(false)
+        }
+    }, [isTurnReady])
+
     return (
-        <div className={`rounded-2xl border border-white/20 bg-white/10 px-4 pt-4 pb-2 text-white flex flex-col gap-2 ${className}`}>
+        <div className={`rounded-2xl border border-white/20 bg-white/10 px-3 pt-2.5 pb-1.5 text-white flex flex-col gap-1.5 ${className}`}>
             <div
-                className={`flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-2 h-[3.33rem] ${isTurn && (canBet || canRaise)
+                className={`flex items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-1.5 h-[2.5rem] ${isTurnReady && (canBet || canRaise)
                     ? ""
                     : "invisible pointer-events-none"
                     }`}
@@ -223,27 +251,92 @@ export function ActionControls({
                     all-in
                 </button>
             </div>
-            <div className="flex gap-5 items-stretch min-h-[11rem]">
-                {/* 左: Bet/Raise, Check/Call, Fold（幅固定・縦は枠いっぱい） */}
-                <div className="flex flex-col gap-2 shrink-0 w-[8.25rem] min-w-[8.25rem] min-h-0">
+            <div className="flex gap-3 items-stretch min-h-[7.5rem]">
+                {/* 左: Bet/Raise+矢印, Check/Call, Fold（枠いっぱい幅） */}
+                <div className="grid grid-rows-3 gap-1.5 flex-1 min-w-0 min-h-0">
+                    {/* Raise と矢印上ボタン（△の上にスライダーパネルが出現）・Call/Foldと同じ行高さ */}
                     {betRaiseButton ? (
-                        <button
-                            type="button"
-                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${getActionButtonClass("bet")}`}
-                            onClick={() => handleAmountAction(betRaiseButton.action)}
-                            disabled={!table || !playerId || !isTurn}
-                        >
-                            {betRaiseButton.label}
-                        </button>
+                        <div className="relative flex gap-1.5 h-full min-h-0">
+                            <button
+                                type="button"
+                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
+                                onClick={() => handleAmountAction(betRaiseButton.action)}
+                                disabled={!table || !playerId || !isTurn}
+                            >
+                                {betRaiseButton.label}
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded px-2 py-1.5 text-sm font-semibold bg-white/20 hover:bg-white/30 shrink-0 h-full flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none w-10"
+                                onClick={() => setAmountOverlayOpen((v) => !v)}
+                                disabled={!table || sliderMin >= sliderMax}
+                                aria-label="ベット額を調整"
+                                aria-expanded={amountOverlayOpen}
+                            >
+                                <span className="text-lg leading-none" aria-hidden>▲</span>
+                            </button>
+                            {/* 三角形の直上にスライダー＋±ボタンを表示 */}
+                            {amountOverlayOpen && (
+                                <div
+                                    className="absolute right-0 bottom-full mb-1 z-50 rounded-xl border border-white/20 bg-slate-900 px-4 py-4 shadow-xl flex gap-4 items-stretch"
+                                    role="dialog"
+                                    aria-label="ベット額を調整"
+                                >
+                                    <div className="flex flex-col gap-2 shrink-0 justify-center">
+                                        {[
+                                            { label: "+5", delta: 5 },
+                                            { label: "+1", delta: 1 },
+                                            { label: "-1", delta: -1 },
+                                            { label: "-5", delta: -5 },
+                                        ].map(({ label, delta }) => (
+                                            <button
+                                                key={label}
+                                                type="button"
+                                                className="w-12 h-10 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold disabled:opacity-50 disabled:pointer-events-none"
+                                                onClick={() => adjustBet(delta)}
+                                                disabled={!table || sliderMin >= sliderMax}
+                                            >
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex flex-col items-center justify-center gap-1">
+                                        <div className="h-40 w-6 flex items-center justify-center shrink-0">
+                                            <input
+                                                type="range"
+                                                min={sliderMin}
+                                                max={sliderMax}
+                                                value={effectiveBetSize}
+                                                onChange={(e) => setBetSize(Number(e.target.value))}
+                                                className="vertical-slider w-40 h-6 appearance-none bg-transparent cursor-pointer disabled:opacity-50"
+                                                style={{
+                                                    transform: "rotate(-90deg)",
+                                                    transformOrigin: "center center",
+                                                }}
+                                                disabled={!table || sliderMin >= sliderMax}
+                                            />
+                                        </div>
+                                        <span className="text-sm font-semibold text-white tabular-nums">
+                                            {effectiveBetSize}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     ) : (
-                        <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
-                            —
+                        <div className="flex gap-1.5 h-full min-h-0">
+                            <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center">
+                                —
+                            </div>
+                            <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
+                                <span className="text-white/30 text-lg leading-none">▲</span>
+                            </div>
                         </div>
                     )}
                     {checkCallBtn ? (
                         <button
                             type="button"
-                            className="rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center"
+                            className="rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
                             onClick={() => {
                                 if (checkCallBtn)
                                     onAction({
@@ -257,14 +350,14 @@ export function ActionControls({
                             {checkCallBtn.label}
                         </button>
                     ) : (
-                        <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
+                        <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center">
                             —
                         </div>
                     )}
-                    {isTurn ? (
+                    {isTurnReady ? (
                         <button
                             type="button"
-                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${foldBlocked
+                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${foldBlocked
                                 ? "bg-sky-300/50 text-white/70"
                                 : "bg-sky-500/80 hover:bg-sky-500"
                                 }`}
@@ -283,7 +376,7 @@ export function ActionControls({
                     ) : showAllFoldToggle ? (
                         <button
                             type="button"
-                            className={`rounded px-3 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center ${allFoldEnabled
+                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${allFoldEnabled
                                 ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
                                 : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
                                 }`}
@@ -296,49 +389,11 @@ export function ActionControls({
                             {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
                         </button>
                     ) : (
-                        <div className="rounded px-3 py-2 text-base font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center flex-1 min-h-0 flex items-center justify-center">
+                        <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center">
                             —
                         </div>
                     )}
                 </div>
-                {/* 自分のターン時のみ: 微調整ボタンとベットサイズバー */}
-                {isTurn && (
-                    <div className="flex-1 min-w-0 flex gap-2 items-stretch justify-end ml-2">
-                        <div className="flex flex-col gap-2 shrink-0 justify-center mr-0.5">
-                            {[
-                                { label: "+5", delta: 5 },
-                                { label: "+1", delta: 1 },
-                                { label: "-1", delta: -1 },
-                                { label: "-5", delta: -5 },
-                            ].map(({ label, delta }) => (
-                                <button
-                                    key={label}
-                                    type="button"
-                                    className="w-7 h-6.5 rounded bg-white/20 hover:bg-white/30 text-xs font-medium disabled:opacity-50 disabled:pointer-events-none"
-                                    onClick={() => adjustBet(delta)}
-                                    disabled={!table || sliderMin >= sliderMax}
-                                >
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="w-8 shrink-0 flex items-center justify-center self-stretch min-h-0 overflow-visible">
-                            <input
-                                type="range"
-                                min={sliderMin}
-                                max={sliderMax}
-                                value={effectiveBetSize}
-                                onChange={(e) => setBetSize(Number(e.target.value))}
-                                className="vertical-slider w-[11rem] h-5 appearance-none bg-transparent cursor-pointer disabled:opacity-50"
-                                style={{
-                                    transform: "rotate(-90deg)",
-                                    transformOrigin: "center center",
-                                }}
-                                disabled={!table || sliderMin >= sliderMax}
-                            />
-                        </div>
-                    </div>
-                )}
             </div>
             {table?.street === "waiting" && (
                 <p className="text-[10px] text-white/50">

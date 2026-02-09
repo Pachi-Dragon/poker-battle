@@ -7,6 +7,24 @@ interface ActionHistoryProps {
     hideAmounts?: boolean
 }
 
+const actionLabels: Record<string, string> = {
+    refund: "返却",
+}
+
+const detailLabels: Record<string, string> = {
+    uncalled: "未コール分",
+}
+
+function formatActionLabel(action: ActionRecord) {
+    const raw = action.action ?? ""
+    return actionLabels[raw] ?? raw
+}
+
+function formatDetailLabel(detail?: string | null) {
+    if (!detail) return ""
+    return detailLabels[detail] ?? detail
+}
+
 export function ActionHistory({
     actions,
     className = "",
@@ -34,9 +52,9 @@ export function ActionHistory({
                             <span className="font-semibold">
                                 {action.actor_name ?? "System"}
                             </span>{" "}
-                            {action.action}
+                            {formatActionLabel(action)}
                             {!hideAmounts && action.amount ? ` ${action.amount}` : ""}
-                            {action.detail ? ` (${action.detail})` : ""}
+                            {action.detail ? ` (${formatDetailLabel(action.detail)})` : ""}
                         </li>
                     ))}
                 </ul>

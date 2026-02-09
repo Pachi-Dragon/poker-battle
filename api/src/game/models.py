@@ -88,3 +88,7 @@ class ReserveSeatPayload(BaseModel):
     name: str
     seat_index: int
 
+
+class RevealHandPayload(BaseModel):
+    player_id: str
+

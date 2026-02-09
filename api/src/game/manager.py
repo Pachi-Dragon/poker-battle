@@ -107,6 +107,7 @@ class GameTable:
         self.buy_in = buy_in_bb * big_blind
         self.cashout_threshold = cashout_threshold_bb * big_blind
         self.cashout_amount = cashout_amount_bb * big_blind
+        self.auto_topup_amount = 300
         self.seats: List[SeatState] = [
             SeatState(seat_index=index) for index in range(max_players)
         ]
@@ -155,7 +156,7 @@ class GameTable:
             if seat.player_id
             and seat.seat_index not in self.pending_join_seats
             and seat.seat_index not in self.folded_seats
-            and seat.seat_index not in self.all_in_seats
+            and not self._is_all_in_like(seat.seat_index)
         ]
 
     def _in_hand_seat_indices(self) -> List[int]:
@@ -166,6 +167,14 @@ class GameTable:
             and seat.seat_index not in self.pending_join_seats
             and seat.seat_index not in self.folded_seats
         ]
+
+    def _is_all_in_like(self, seat_index: int) -> bool:
+        seat = self.seats[seat_index]
+        return (
+            seat_index in self.all_in_seats
+            or seat.is_all_in
+            or seat.stack == 0
+        )
 
     def _next_occupied_seat(self, start_index: int) -> Optional[int]:
         for offset in range(1, self.max_players + 1):
@@ -180,7 +189,7 @@ class GameTable:
             if (
                 self.seats[seat_index].player_id
                 and seat_index not in self.folded_seats
-                and seat_index not in self.all_in_seats
+                and not self._is_all_in_like(seat_index)
             ):
                 return seat_index
         return None
@@ -224,6 +233,19 @@ class GameTable:
             if seat.player_id:
                 seat.stack += amount
         self.pending_payouts.clear()
+        for seat in self.seats:
+            if seat.player_id and seat.stack == 0:
+                seat.stack += self.auto_topup_amount
+                self.action_history.append(
+                    ActionRecord(
+                        actor_id=seat.player_id,
+                        actor_name=seat.name,
+                        action="auto_topup",
+                        amount=self.auto_topup_amount,
+                        street=self.street,
+                        detail="stack_empty",
+                    )
+                )
 
     def _finalize_pending_leaves(self) -> None:
         if not self.pending_leave_seats:
@@ -385,7 +407,15 @@ class GameTable:
             seat = self.seats[seat_index]
             if seat.hole_cards:
                 ranks[seat_index] = _best_hand_rank(seat.hole_cards + self.board)
-        dealer_order = self._dealer_order()
+        positions = self._seat_positions()
+        position_priority = {
+            "SB": 0,
+            "BB": 1,
+            "UTG": 2,
+            "HJ": 3,
+            "CO": 4,
+            "BTN": 5,
+        }
         for amount, eligible in self._build_side_pots():
             if amount <= 0 or not eligible:
                 continue
@@ -393,7 +423,10 @@ class GameTable:
             winners = [seat for seat in eligible if ranks[seat] == best_rank]
             split = amount // len(winners)
             remainder = amount % len(winners)
-            winners_sorted = sorted(winners, key=lambda seat: dealer_order.index(seat))
+            winners_sorted = sorted(
+                winners,
+                key=lambda seat: position_priority.get(positions.get(seat), 0),
+            )
             for seat_index in winners_sorted:
                 payout = split + (1 if remainder > 0 else 0)
                 if remainder > 0:
@@ -666,19 +699,7 @@ class GameTable:
         )
 
     def apply_auto_cashout(self) -> None:
-        for seat in self.seats:
-            if seat.player_id and seat.stack >= self.cashout_threshold:
-                seat.stack -= self.cashout_amount
-                self.action_history.append(
-                    ActionRecord(
-                        actor_id=seat.player_id,
-                        actor_name=seat.name,
-                        action="auto_cashout",
-                        amount=self.cashout_amount,
-                        street=self.street,
-                        detail="stack_over_threshold",
-                    )
-                )
+        return
 
     def record_action(self, payload: ActionPayload, *, skip_auto_play: bool = False) -> None:
         seat = self._find_seat(payload.player_id)
@@ -870,6 +891,24 @@ class GameTable:
             )
             safety += 1
 
+    def record_hand_reveal(self, player_id: str) -> bool:
+        seat = self._find_seat(player_id)
+        if not seat:
+            return False
+        if self.street != Street.settlement:
+            return False
+        if any(action.action == "showdown" for action in self.action_history):
+            return False
+        if any(
+            action.action == "hand_reveal" and action.actor_id == player_id
+            for action in self.action_history
+        ):
+            return False
+        if not seat.hole_cards:
+            return False
+        self._record_action(seat, "hand_reveal")
+        return True
+
     def _record_action(
         self, seat: SeatState, action: str, amount: Optional[int] = None, detail: Optional[str] = None
     ) -> None:
@@ -887,10 +926,37 @@ class GameTable:
     def _hand_over(self) -> bool:
         return len(self._in_hand_seat_indices()) <= 1
 
+    def should_auto_runout(self) -> bool:
+        if self.street not in (Street.preflop, Street.flop, Street.turn, Street.river):
+            return False
+        if self._hand_over():
+            return False
+        if not self._street_complete():
+            return False
+        in_hand = self._in_hand_seat_indices()
+        if not in_hand:
+            return False
+        active = [seat for seat in in_hand if not self._is_all_in_like(seat)]
+        all_in_like = [seat for seat in in_hand if self._is_all_in_like(seat)]
+        if not all_in_like:
+            return False
+        return len(active) <= 1
+
+    def advance_auto_runout(self) -> bool:
+        if not self.should_auto_runout():
+            return False
+        self._advance_street(auto_runout=True)
+        return True
+
     def _street_complete(self) -> bool:
         active = self._active_seat_indices()
         if not active:
             return True
+        if len(active) == 1:
+            seat_index = active[0]
+            player_commit = self.street_contribs.get(seat_index, 0)
+            if self.current_bet == 0 or player_commit == self.current_bet:
+                return True
         if self.current_bet == 0:
             return all(seat_index in self.acted_seats for seat_index in active)
         if (
@@ -909,8 +975,55 @@ class GameTable:
                 return False
         return True
 
+    def _refund_uncalled_bet(self) -> None:
+        if self.current_bet == 0:
+            return
+        contributions = {
+            seat_index: self.street_contribs.get(seat_index, 0)
+            for seat_index in range(self.max_players)
+            if self.seats[seat_index].player_id
+        }
+        if not contributions:
+            return
+        max_amount = max(contributions.values())
+        if max_amount <= 0:
+            return
+        max_seats = [seat for seat, amount in contributions.items() if amount == max_amount]
+        if len(max_seats) != 1:
+            return
+        second_max = max(
+            (amount for amount in contributions.values() if amount != max_amount),
+            default=0,
+        )
+        refund = max_amount - second_max
+        if refund <= 0:
+            return
+        seat_index = max_seats[0]
+        seat = self.seats[seat_index]
+        seat.stack += refund
+        self.pot -= refund
+        self.hand_contribs[seat_index] = max(
+            0, self.hand_contribs.get(seat_index, 0) - refund
+        )
+        self.street_contribs[seat_index] = max(
+            0, self.street_contribs.get(seat_index, 0) - refund
+        )
+        seat.street_commit = self.street_contribs[seat_index]
+        self.current_bet = max(self.street_contribs.values(), default=0)
+        self.action_history.append(
+            ActionRecord(
+                actor_id=seat.player_id,
+                actor_name=seat.name,
+                action="refund",
+                amount=refund,
+                street=self.street,
+                detail="uncalled",
+            )
+        )
+
     def _advance_turn_or_street(self) -> None:
         if self._hand_over():
+            self._refund_uncalled_bet()
             self.street = Street.settlement
             self.current_turn_seat = None
             self.action_history.append(
@@ -919,12 +1032,16 @@ class GameTable:
             self._settle_pots()
             return
         if self._street_complete():
-            self._advance_street()
+            self._refund_uncalled_bet()
+            if self.should_auto_runout():
+                self._advance_street(auto_runout=True)
+            else:
+                self._advance_street()
             return
         next_seat = self._next_active_seat(self.current_turn_seat or 0)
         self.current_turn_seat = next_seat
 
-    def _advance_street(self) -> None:
+    def _advance_street(self, *, auto_runout: bool = False) -> None:
         if self.street == Street.preflop:
             self.street = Street.flop
         elif self.street == Street.flop:
@@ -947,7 +1064,12 @@ class GameTable:
         self.action_history.append(
             ActionRecord(action=f"street_{self.street}", street=self.street)
         )
-        self.current_turn_seat = self._next_active_seat(self.dealer_seat)  # first to act postflop
+        if auto_runout:
+            self.current_turn_seat = None
+        else:
+            self.current_turn_seat = self._next_active_seat(
+                self.dealer_seat
+            )  # first to act postflop
 
     def to_state(self, connected_player_ids: Optional[Set[str]] = None) -> TableState:
         positions = self._seat_positions()
@@ -969,7 +1091,7 @@ class GameTable:
                     is_connected=is_connected,
                     is_ready=seat.is_ready,
                     is_folded=seat.seat_index in self.folded_seats,
-                    is_all_in=seat.seat_index in self.all_in_seats,
+                    is_all_in=self._is_all_in_like(seat.seat_index),
                     street_commit=self.street_contribs.get(seat.seat_index, 0),
                     raise_blocked=seat.seat_index in self.raise_blocked_seats,
                 )

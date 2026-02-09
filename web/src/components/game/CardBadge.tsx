@@ -21,7 +21,7 @@ function getSuitColor(card: string) {
 export function CardBadge({ card, className = "", style }: CardBadgeProps) {
     return (
         <span
-            className={`inline-flex w-[45px] shrink-0 items-center justify-center rounded border border-white/80 px-2.5 py-1.5 text-sm font-semibold text-white ${getSuitColor(
+            className={`inline-flex h-6 w-[38px] shrink-0 items-center justify-center rounded border border-white/80 px-2 py-1 text-sm font-semibold text-white ${getSuitColor(
                 card
             )} ${className}`}
             style={style}
