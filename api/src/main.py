@@ -7,6 +7,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from dotenv import load_dotenv
 
+from .earnings.store import EarningsStore
 from .game.manager import ConnectionManager, GameTable
 from .game.models import (
     ActionPayload,
@@ -22,6 +23,7 @@ load_dotenv()
 app = FastAPI()
 manager = ConnectionManager()
 table = GameTable(table_id="default")
+earnings_store = EarningsStore()
 HAND_DELAY_SECONDS = 1.0
 RUNOUT_DELAY_SECONDS = 1.6
 LEAVE_GRACE_SECONDS = 30.0
@@ -50,6 +52,13 @@ class AuthRequest(BaseModel):
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Poker API is running"}
+
+
+@app.get("/earnings")
+async def get_earnings(email: str):
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    return await earnings_store.get(email)
 
 # Googleログイン用のエンドポイントを追加
 @app.post("/login/google")
@@ -164,6 +173,11 @@ async def websocket_game(websocket: WebSocket):
                 settlement_gauge_timeout_task.cancel()
                 settlement_gauge_timeout_task = None
             settlement_gauge_ready.clear()
+            try:
+                updates = table.build_earnings_updates()
+                await earnings_store.apply_updates(updates)
+            except Exception as exc:
+                print(f"earnings update failed: {exc}")
             table.apply_pending_payouts()
             table._finalize_pending_leaves()
             table._finalize_leave_after_hand()

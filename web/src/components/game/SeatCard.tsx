@@ -16,6 +16,7 @@ interface SeatCardProps {
     chipsOnlyAmount?: number
     hideCommitBadge?: boolean
     onReserve?: () => void
+    onSelect?: () => void
 }
 
 export function SeatCard({
@@ -30,6 +31,7 @@ export function SeatCard({
     chipsOnlyAmount,
     hideCommitBadge = false,
     onReserve,
+    onSelect,
 }: SeatCardProps) {
     const cardDropAnimationMs = 420
     const occupied = Boolean(seat.player_id)
@@ -85,6 +87,7 @@ export function SeatCard({
             (seat.street_commit ?? 0) > 0 ||
             effectiveAction === "fold" ||
             effectiveAction === "check")
+    const isClickable = occupied && Boolean(onSelect)
 
     useEffect(() => {
         const prevCount = prevHoleCountRef.current
@@ -118,7 +121,20 @@ export function SeatCard({
                             ? "border-yellow-400"
                             : "border-white/20"
                         : "border-white/30 border-dashed"
-                    }`}
+                    } ${isClickable ? "cursor-pointer hover:border-white/50" : ""}`}
+                onClick={isClickable ? onSelect : undefined}
+                onKeyDown={
+                    isClickable
+                        ? (event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault()
+                                onSelect?.()
+                            }
+                        }
+                        : undefined
+                }
+                role={isClickable ? "button" : undefined}
+                tabIndex={isClickable ? 0 : undefined}
             >
                 {showWinner && (
                     <div className="absolute -top-4 left-1/2 -translate-x-1/2">
@@ -137,7 +153,10 @@ export function SeatCard({
                 {!occupied && canReserve && (
                     <button
                         type="button"
-                        onClick={onReserve}
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            onReserve?.()
+                        }}
                         className="absolute inset-2 flex items-center justify-center rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10"
                         aria-label="Reserve seat"
                     >

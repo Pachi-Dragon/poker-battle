@@ -247,6 +247,33 @@ class GameTable:
                     )
                 )
 
+    def build_earnings_updates(self) -> List[Dict[str, int | str]]:
+        updates: List[Dict[str, int | str]] = []
+        for seat in self.seats:
+            if not seat.player_id or not seat.hole_cards or len(seat.hole_cards) != 2:
+                continue
+            payout = self.pending_payouts.get(seat.seat_index, 0)
+            contrib = self.hand_contribs.get(seat.seat_index, 0)
+            delta = payout - contrib
+            is_special = self._is_69_92_hand(seat.hole_cards)
+            updates.append(
+                {
+                    "email": seat.player_id,
+                    "hands": 1,
+                    "chips_delta": delta,
+                    "hands_69_92": 1 if is_special else 0,
+                    "chips_delta_69_92": delta if is_special else 0,
+                }
+            )
+        return updates
+
+    @staticmethod
+    def _is_69_92_hand(cards: List[str]) -> bool:
+        if len(cards) != 2:
+            return False
+        ranks = {card[:-1] for card in cards}
+        return ranks in ({"6", "9"}, {"9", "2"})
+
     def _finalize_pending_leaves(self) -> None:
         if not self.pending_leave_seats:
             return

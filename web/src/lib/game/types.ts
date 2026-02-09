@@ -57,6 +57,13 @@ export interface JoinTablePayload {
     name: string
 }
 
+export interface EarningsSummary {
+    hands: number
+    chips_delta: number
+    hands_69_92: number
+    chips_delta_69_92: number
+}
+
 export interface ActionPayload {
     player_id: string
     action: ActionType

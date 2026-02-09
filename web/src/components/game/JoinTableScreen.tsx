@@ -1,8 +1,10 @@
 "use client"
 
-import { JoinTablePayload } from "@/lib/game/types"
+import { EarningsPanel } from "@/components/game/EarningsPanel"
+import { fetchEarningsSummary } from "@/lib/game/earnings"
+import { EarningsSummary, JoinTablePayload } from "@/lib/game/types"
 import { signOut } from "next-auth/react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { GameClient } from "./GameClient"
 
 interface JoinTableScreenProps {
@@ -23,6 +25,63 @@ export function JoinTableScreen({
 }: JoinTableScreenProps) {
     const [name, setName] = useState(defaultName)
     const [player, setPlayer] = useState<JoinTablePayload | null>(null)
+    const [earningsSummary, setEarningsSummary] = useState<EarningsSummary | null>(
+        null
+    )
+    const [earningsLoading, setEarningsLoading] = useState(false)
+    const [earningsError, setEarningsError] = useState<string | null>(null)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+
+    const loadEarnings = () => {
+        if (!email || player) return
+        setEarningsLoading(true)
+        setEarningsError(null)
+        fetchEarningsSummary(apiUrl, email)
+            .then((summary) => {
+                setEarningsSummary(summary)
+            })
+            .catch((error) => {
+                setEarningsError(
+                    error.message ?? "収支を取得できませんでした。"
+                )
+            })
+            .finally(() => {
+                setEarningsLoading(false)
+            })
+    }
+
+    useEffect(() => {
+        if (player) return
+        if (!email) {
+            setEarningsError("ログイン情報がないため収支を表示できません。")
+            setEarningsSummary(null)
+            setEarningsLoading(false)
+            return
+        }
+
+        let cancelled = false
+        setEarningsLoading(true)
+        setEarningsError(null)
+        fetchEarningsSummary(apiUrl, email)
+            .then((summary) => {
+                if (cancelled) return
+                setEarningsSummary(summary)
+            })
+            .catch((error) => {
+                if (cancelled) return
+                setEarningsError(
+                    error.message ?? "収支を取得できませんでした。"
+                )
+            })
+            .finally(() => {
+                if (cancelled) return
+                setEarningsLoading(false)
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [apiUrl, email, player])
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
@@ -82,6 +141,18 @@ export function JoinTableScreen({
                 )}
             </main>
 
+            {!player && (
+                <div className="shrink-0 px-4 pb-3">
+                    <EarningsPanel
+                        title="あなたの収支"
+                        summary={earningsSummary}
+                        isLoading={earningsLoading}
+                        error={earningsError}
+                        onRefresh={loadEarnings}
+                        refreshLabel="更新"
+                    />
+                </div>
+            )}
             {/* フッター: メール・ログアウトはHOME（名前入力）のときのみ表示。ポーカー画面では非表示 */}
             {!player && (
                 <footer className="shrink-0 border-t-2 border-white bg-emerald-950/95 px-4 py-3 mx-4 mb-4 rounded-lg">

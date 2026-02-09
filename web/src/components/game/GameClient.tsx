@@ -3,16 +3,19 @@
 import {
     ActionPayload,
     ActionRecord,
+    EarningsSummary,
     GameMessage,
     JoinTablePayload,
     ReserveSeatPayload,
     TableState,
 } from "@/lib/game/types"
+import { fetchEarningsSummary } from "@/lib/game/earnings"
 import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ActionControls } from "./ActionControls"
 import { ActionHistory } from "./ActionHistory"
 import { BoardPot } from "./BoardPot"
+import { EarningsModal } from "./EarningsModal"
 import { SeatCard } from "./SeatCard"
 import { getHandLabel } from "@/lib/game/handRank"
 
@@ -62,6 +65,16 @@ export function GameClient({
     const [actionControlsHeight, setActionControlsHeight] = useState<number | null>(
         null
     )
+    const [earningsTarget, setEarningsTarget] = useState<{
+        email: string
+        name?: string | null
+    } | null>(null)
+    const [earningsSummary, setEarningsSummary] = useState<EarningsSummary | null>(
+        null
+    )
+    const [earningsLoading, setEarningsLoading] = useState(false)
+    const [earningsError, setEarningsError] = useState<string | null>(null)
+    const earningsCacheRef = useRef<Map<string, EarningsSummary>>(new Map())
     const timeLimitSeconds = 30
     const timeLimitMs = timeLimitSeconds * 1000
     const [timeLimitEnabled, setTimeLimitEnabled] = useState(false)
@@ -115,6 +128,59 @@ export function GameClient({
         socket.send(JSON.stringify(message))
         scheduleHeartbeat()
     }
+
+    const openEarningsForSeat = (seat: {
+        player_id?: string | null
+        name?: string | null
+    }) => {
+        if (!seat.player_id) return
+        setEarningsTarget({ email: seat.player_id, name: seat.name })
+    }
+
+    const fetchTargetEarnings = (forceRefresh = false) => {
+        if (!earningsTarget) return
+        const cached = earningsCacheRef.current.get(earningsTarget.email)
+        if (cached && !forceRefresh) {
+            setEarningsSummary(cached)
+            setEarningsError(null)
+            setEarningsLoading(false)
+            return
+        }
+        let cancelled = false
+        setEarningsLoading(true)
+        setEarningsError(null)
+        setEarningsSummary(null)
+        fetchEarningsSummary(apiUrl, earningsTarget.email)
+            .then((summary) => {
+                if (cancelled) return
+                earningsCacheRef.current.set(earningsTarget.email, summary)
+                setEarningsSummary(summary)
+            })
+            .catch((error) => {
+                if (cancelled) return
+                setEarningsError(error.message ?? "収支を取得できませんでした。")
+            })
+            .finally(() => {
+                if (cancelled) return
+                setEarningsLoading(false)
+            })
+        return () => {
+            cancelled = true
+        }
+    }
+
+    useEffect(() => {
+        if (!earningsTarget) {
+            setEarningsSummary(null)
+            setEarningsError(null)
+            setEarningsLoading(false)
+            return
+        }
+        const cancel = fetchTargetEarnings(false)
+        return () => {
+            if (cancel) cancel()
+        }
+    }, [apiUrl, earningsTarget])
 
     const handleReconnect = () => {
         const socket = socketRef.current
@@ -1066,6 +1132,7 @@ export function GameClient({
                                             override?.mode === "hide" || hideActionAmounts
                                         }
                                         onReserve={() => handleReserveSeat(seat.seat_index)}
+                                        onSelect={() => openEarningsForSeat(seat)}
                                     />
                                 </div>
                             )
@@ -1161,6 +1228,16 @@ export function GameClient({
                     </div>
                 </div>
             </main>
+            {earningsTarget && (
+                <EarningsModal
+                    title={`${earningsTarget.name ?? earningsTarget.email} の収支`}
+                    summary={earningsSummary}
+                    isLoading={earningsLoading}
+                    error={earningsError}
+                    onRefresh={() => fetchTargetEarnings(true)}
+                    onClose={() => setEarningsTarget(null)}
+                />
+            )}
             {isMenuOpen && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
