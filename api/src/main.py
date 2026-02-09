@@ -177,8 +177,9 @@ async def websocket_game(websocket: WebSocket):
                 settlement_gauge_timeout_task = None
             settlement_gauge_ready.clear()
             try:
-                updates = table.build_earnings_updates()
-                await earnings_store.apply_updates(updates)
+                if table.save_earnings:
+                    updates = table.build_earnings_updates()
+                    await earnings_store.apply_updates(updates)
             except Exception as exc:
                 print(f"earnings update failed: {exc}")
             table.apply_pending_payouts()
@@ -297,6 +298,7 @@ async def websocket_game(websocket: WebSocket):
                     table.street == Street.waiting
                     and len([s for s in table.seats if s.player_id]) >= 2
                 ):
+                    table.save_earnings = payload.get("save_stats", True)
                     await start_hand_with_delay()
             else:
                 await manager.send(

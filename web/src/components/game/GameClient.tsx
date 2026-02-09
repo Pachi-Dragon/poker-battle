@@ -109,6 +109,7 @@ export function GameClient({
     const [seatActionOverrides, setSeatActionOverrides] = useState<
         Record<number, { mode: "chips" | "hide"; amount?: number }>
     >({})
+    const [saveStats, setSaveStats] = useState(true)
 
     const scheduleHeartbeat = () => {
         if (heartbeatTimeoutRef.current) {
@@ -945,7 +946,7 @@ export function GameClient({
     }
 
     const handleStartHand = () => {
-        sendMessage({ type: "startHand" })
+        sendMessage({ type: "startHand", payload: { save_stats: saveStats } })
     }
 
     const handleRevealHand = () => {
@@ -1158,6 +1159,8 @@ export function GameClient({
                                     table={displayTableState}
                                     canStart={canStartHand}
                                     onStart={handleStartHand}
+                                    saveStats={saveStats}
+                                    onSaveStatsChange={setSaveStats}
                                     blinds={displayBlinds}
                                     potOverride={potOverride}
                                     foldVisibleStreet={foldVisibleStreet}

@@ -7,6 +7,9 @@ interface BoardPotProps {
     table: TableState
     canStart?: boolean
     onStart?: () => void
+    /** 収支を保存するか（false のとき「収支を保存しない」にチェック） */
+    saveStats?: boolean
+    onSaveStatsChange?: (value: boolean) => void
     /** SB/BB表示用（左隅に SB-BB 1-3 形式で表示） */
     blinds?: { sb: number; bb: number } | null
     /** 表示用ポットを強制する（リセット抑止など） */
@@ -40,6 +43,8 @@ export function BoardPot({
     table,
     canStart = false,
     onStart,
+    saveStats = true,
+    onSaveStatsChange,
     blinds,
     potOverride,
     foldVisibleStreet,
@@ -206,17 +211,30 @@ export function BoardPot({
                     })}
                 </div>
                 {showStart && (
-                    <button
-                        type="button"
-                        className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
-                            ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                            : "bg-white/10 text-white/40 cursor-not-allowed"
-                            }`}
-                        onClick={onStart}
-                        disabled={!canStart}
-                    >
-                        ここを押すとスタート
-                    </button>
+                    <div className="flex flex-col items-center gap-1.5">
+                        <button
+                            type="button"
+                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
+                                ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                : "bg-white/10 text-white/40 cursor-not-allowed"
+                                }`}
+                            onClick={onStart}
+                            disabled={!canStart}
+                        >
+                            ここを押すとスタート
+                        </button>
+                        {onSaveStatsChange && (
+                            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
+                                <input
+                                    type="checkbox"
+                                    checked={!saveStats}
+                                    onChange={(e) => onSaveStatsChange(!e.target.checked)}
+                                    className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
+                                />
+                                収支を保存しない
+                            </label>
+                        )}
+                    </div>
                 )}
                 <div className="flex items-baseline justify-center gap-1.5 shrink-0">
                     <span className="text-[10px] uppercase tracking-wider text-white/60">Pot</span>
