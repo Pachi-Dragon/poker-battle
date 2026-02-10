@@ -359,10 +359,10 @@ export function ActionControls({
 
     return (
         <>
-            <div className={`rounded-2xl border border-white/20 bg-white/10 px-3 pt-2.5 pb-1.5 text-white flex flex-col gap-1.5 min-h-0 h-full ${className}`}>
+            <div className={`rounded-2xl border border-white/20 bg-white/10 px-3 pt-2.5 pb-1.5 text-white grid grid-rows-4 gap-1.5 min-h-0 h-full ${className}`}>
                 <div
                     ref={quickBetScrollRef}
-                    className={`flex items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-1.5 h-[2.5rem] ${isTurnReady && (canBet || canRaise)
+                    className={`flex items-stretch gap-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-1.5 min-h-0 h-full ${isTurnReady && (canBet || canRaise)
                         ? ""
                         : "invisible pointer-events-none"
                         }`}
@@ -384,7 +384,7 @@ export function ActionControls({
                         <button
                             key={key}
                             type="button"
-                            className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25"
+                            className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25 flex items-center justify-center leading-none"
                             onClick={onClick}
                         >
                             {label}
@@ -392,151 +392,149 @@ export function ActionControls({
                     ))}
                     <button
                         type="button"
-                        className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25"
+                        className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25 flex items-center justify-center leading-none"
                         onClick={() => setBetTo(sliderMax)}
                     >
                         all-in
                     </button>
                 </div>
-                <div className="flex flex-1 gap-3 items-stretch min-h-0">
-                    {/* 左: Bet/Raise+矢印, Check/Call, Fold（枠いっぱい幅・縦均等・余白時は均一に伸長） */}
-                    <div className="grid grid-rows-3 gap-1.5 flex-1 min-w-0 min-h-0">
-                        {/* Raise と矢印上ボタン（△の上にスライダーパネルが出現）・Call/Foldと同じ行高さ */}
-                        {raiseSlot === "stop-next" ? (
-                            <div className="flex gap-1.5 h-full min-h-0">
-                                <button
-                                    type="button"
-                                    className={`rounded px-2.5 py-1.5 text-sm font-semibold whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${isWaitPaused
-                                        ? "bg-white/20 text-white/80 hover:bg-white/30"
-                                        : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                        }`}
-                                    onClick={() => onNextHandDelayToggle?.()}
-                                >
-                                    {isWaitPaused ? "NEXT" : "STOP"}
-                                </button>
-                                <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
-                                    <span className="text-white/30 text-lg leading-none">▲</span>
-                                </div>
-                            </div>
-                        ) : betRaiseButton ? (
-                            <div className="relative flex gap-1.5 h-full min-h-0">
-                                <button
-                                    type="button"
-                                    className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
-                                    onClick={() => handleAmountAction(betRaiseButton.action)}
-                                    disabled={!table || !playerId || !isTurn}
-                                >
-                                    {betRaiseButton.label}
-                                </button>
-                                <button
-                                    type="button"
-                                    className="rounded px-2 py-1.5 text-sm font-semibold bg-white/20 hover:bg-white/30 shrink-0 h-full flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none w-10"
-                                    onClick={() => setAmountOverlayOpen((v) => !v)}
-                                    disabled={!table || sliderMin >= sliderMax}
-                                    aria-label="ベット額を調整"
-                                    aria-expanded={amountOverlayOpen}
-                                    ref={amountOverlayButtonRef}
-                                >
-                                    <span className="text-lg leading-none" aria-hidden>▲</span>
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="flex gap-1.5 h-full min-h-0">
-                                <div className={emptySlotClass + " flex-1 min-w-0"}>
-                                    —
-                                </div>
-                                <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
-                                    <span className="text-white/30 text-lg leading-none">▲</span>
-                                </div>
-                            </div>
-                        )}
-                        {callSlot === "reveal" ? (
+                {/* 下3行: Raise / Call / Fold（3行がそれぞれ上のベットサイズ列と同じ縦幅になる） */}
+                <div className="grid grid-rows-3 gap-1.5 min-w-0 min-h-0 row-span-3">
+                    {/* Raise と矢印上ボタン（△の上にスライダーパネルが出現）・Call/Foldと同じ行高さ */}
+                    {raiseSlot === "stop-next" ? (
+                        <div className="flex gap-1.5 h-full min-h-0">
                             <button
                                 type="button"
-                                className="rounded px-2.5 py-1.5 text-sm font-semibold bg-emerald-400/90 text-slate-900 hover:bg-emerald-300 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
-                                onClick={() => onRevealHand?.()}
+                                className={`rounded px-2.5 py-1.5 text-sm font-semibold whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${isWaitPaused
+                                    ? "bg-white/20 text-white/80 hover:bg-white/30"
+                                    : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                    }`}
+                                onClick={() => onNextHandDelayToggle?.()}
                             >
-                                ハンドを公開する
+                                {isWaitPaused ? "NEXT" : "STOP"}
                             </button>
-                        ) : callSlot === "reveal-done" ? (
-                            <div className={emptySlotClass}>
-                                —
+                            <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
+                                <span className="text-white/30 text-lg leading-none">▲</span>
                             </div>
-                        ) : checkCallBtn ? (
+                        </div>
+                    ) : betRaiseButton ? (
+                        <div className="relative flex gap-1.5 h-full min-h-0">
                             <button
                                 type="button"
-                                className="rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
-                                onClick={() => {
-                                    if (checkCallBtn)
-                                        resetQuickBetScroll()
-                                    onAction({
-                                        player_id: playerId,
-                                        action: checkCallBtn.action,
-                                        amount: undefined,
-                                    })
-                                }}
+                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
+                                onClick={() => handleAmountAction(betRaiseButton.action)}
                                 disabled={!table || !playerId || !isTurn}
                             >
-                                {checkCallBtn.label}
+                                {betRaiseButton.label}
                             </button>
-                        ) : (
-                            <div className={emptySlotClass}>
-                                —
-                            </div>
-                        )}
-                        {leaveSlot === "leave" ? (
                             <button
                                 type="button"
-                                className="rounded px-2.5 py-1.5 text-sm font-semibold bg-red-800/70 text-white/90 hover:bg-red-700/70 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
-                                onClick={() => onLeaveAfterHand?.()}
+                                className="rounded px-2 py-1.5 text-sm font-semibold bg-white/20 hover:bg-white/30 shrink-0 h-full flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none w-10"
+                                onClick={() => setAmountOverlayOpen((v) => !v)}
+                                disabled={!table || sliderMin >= sliderMax}
+                                aria-label="ベット額を調整"
+                                aria-expanded={amountOverlayOpen}
+                                ref={amountOverlayButtonRef}
                             >
-                                離席
+                                <span className="text-lg leading-none" aria-hidden>▲</span>
                             </button>
-                        ) : leaveSlot === "leave-done" ? (
-                            <div className={emptySlotClass}>
+                        </div>
+                    ) : (
+                        <div className="flex gap-1.5 h-full min-h-0">
+                            <div className={emptySlotClass + " flex-1 min-w-0"}>
                                 —
                             </div>
-                        ) : isTurnReady ? (
-                            <button
-                                type="button"
-                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${foldBlocked
-                                    ? "bg-sky-300/50 text-white/70"
-                                    : "bg-sky-500/80 hover:bg-sky-500"
-                                    }`}
-                                onClick={() => {
-                                    if (foldBlocked) return
+                            <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
+                                <span className="text-white/30 text-lg leading-none">▲</span>
+                            </div>
+                        </div>
+                    )}
+                    {callSlot === "reveal" ? (
+                        <button
+                            type="button"
+                            className="rounded px-2.5 py-1.5 text-sm font-semibold bg-emerald-400/90 text-slate-900 hover:bg-emerald-300 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                            onClick={() => onRevealHand?.()}
+                        >
+                            ハンドを公開する
+                        </button>
+                    ) : callSlot === "reveal-done" ? (
+                        <div className={emptySlotClass}>
+                            —
+                        </div>
+                    ) : checkCallBtn ? (
+                        <button
+                            type="button"
+                            className="rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                            onClick={() => {
+                                if (checkCallBtn)
                                     resetQuickBetScroll()
-                                    onAction({
-                                        player_id: playerId,
-                                        action: "fold",
-                                        amount: undefined,
-                                    })
-                                }}
-                                disabled={!table || !playerId || foldBlocked || forceAllFold}
-                            >
-                                Fold
-                            </button>
-                        ) : showAllFoldToggle ? (
-                            <button
-                                type="button"
-                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${allFoldEnabled
-                                    ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
-                                    : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
-                                    }`}
-                                onClick={() => {
-                                    if (forceAllFold) return
-                                    setAllFoldEnabled((prev) => !prev)
-                                }}
-                                disabled={!table || !playerId || forceAllFold}
-                            >
-                                {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
-                            </button>
-                        ) : (
-                            <div className={emptySlotClass}>
-                                —
-                            </div>
-                        )}
-                    </div>
+                                onAction({
+                                    player_id: playerId,
+                                    action: checkCallBtn.action,
+                                    amount: undefined,
+                                })
+                            }}
+                            disabled={!table || !playerId || !isTurn}
+                        >
+                            {checkCallBtn.label}
+                        </button>
+                    ) : (
+                        <div className={emptySlotClass}>
+                            —
+                        </div>
+                    )}
+                    {leaveSlot === "leave" ? (
+                        <button
+                            type="button"
+                            className="rounded px-2.5 py-1.5 text-sm font-semibold bg-red-800/70 text-white/90 hover:bg-red-700/70 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                            onClick={() => onLeaveAfterHand?.()}
+                        >
+                            離席
+                        </button>
+                    ) : leaveSlot === "leave-done" ? (
+                        <div className={emptySlotClass}>
+                            —
+                        </div>
+                    ) : isTurnReady ? (
+                        <button
+                            type="button"
+                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${foldBlocked
+                                ? "bg-sky-300/50 text-white/70"
+                                : "bg-sky-500/80 hover:bg-sky-500"
+                                }`}
+                            onClick={() => {
+                                if (foldBlocked) return
+                                resetQuickBetScroll()
+                                onAction({
+                                    player_id: playerId,
+                                    action: "fold",
+                                    amount: undefined,
+                                })
+                            }}
+                            disabled={!table || !playerId || foldBlocked || forceAllFold}
+                        >
+                            Fold
+                        </button>
+                    ) : showAllFoldToggle ? (
+                        <button
+                            type="button"
+                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${allFoldEnabled
+                                ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                                : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
+                                }`}
+                            onClick={() => {
+                                if (forceAllFold) return
+                                setAllFoldEnabled((prev) => !prev)
+                            }}
+                            disabled={!table || !playerId || forceAllFold}
+                        >
+                            {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
+                        </button>
+                    ) : (
+                        <div className={emptySlotClass}>
+                            —
+                        </div>
+                    )}
                 </div>
             </div>
             {amountOverlayNode}

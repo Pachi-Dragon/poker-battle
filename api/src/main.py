@@ -290,6 +290,14 @@ async def websocket_game(websocket: WebSocket):
                 if table.street == Street.waiting and "save_stats" in payload:
                     table.save_earnings = bool(payload["save_stats"])
                     await broadcast_table_state()
+            elif message_type == "requestManualTopup":
+                # Next hand: +300 chips (only when stack <= 100). Earnings unaffected.
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    table.request_manual_topup(player_id)
+                    # No visible change until next hand, but we still broadcast so the UI can
+                    # stay in sync if needed.
+                    await broadcast_table_state()
             elif message_type == "startHand":
                 if (
                     table.street == Street.waiting

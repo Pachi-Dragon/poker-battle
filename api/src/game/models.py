@@ -35,6 +35,9 @@ class SeatState(BaseModel):
     player_id: Optional[str] = None
     name: Optional[str] = None
     stack: int = 0
+    # Stack snapshot at the start of the current hand (before forced blinds/bets).
+    # Used for "manual topup" eligibility checks.
+    hand_start_stack: Optional[int] = None
     position: Optional[str] = None
     last_action: Optional[str] = None
     hole_cards: Optional[List[str]] = None

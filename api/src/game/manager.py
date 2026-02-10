@@ -143,6 +143,52 @@ class GameTable:
         self.big_blind_seat: Optional[int] = None
         self.pending_payouts: Dict[int, int] = {}
         self.save_earnings = False
+        # Manual chip top-up requests (applied at next hand start).
+        # Stored by seat_index for stability across reconnects.
+        self.pending_manual_topup_seats: Set[int] = set()
+        # Snapshot of stacks at the start of the current hand (pre-forced blinds).
+        # Keyed by seat_index.
+        self.hand_start_stack_by_seat_index: Dict[int, int] = {}
+
+    def request_manual_topup(self, player_id: str) -> bool:
+        """
+        Request +auto_topup_amount chips to be added from the next hand.
+
+        Constraints:
+        - Can only be requested when current stack <= 100.
+        - Does not affect earnings (stack is adjusted directly; no contrib/payout).
+        - Idempotent: repeated requests are treated as success.
+        """
+        seat = self._find_seat(player_id)
+        if not seat:
+            raise ValueError("Player not seated")
+        start_stack = self.hand_start_stack_by_seat_index.get(seat.seat_index, seat.stack)
+        if start_stack > 100:
+            raise ValueError("Topup allowed only when hand-start stack <= 100")
+        self.pending_manual_topup_seats.add(seat.seat_index)
+        return True
+
+    def _apply_pending_manual_topups_for_new_hand(self) -> None:
+        if not self.pending_manual_topup_seats:
+            return
+        for seat_index in sorted(self.pending_manual_topup_seats):
+            if seat_index < 0 or seat_index >= self.max_players:
+                continue
+            seat = self.seats[seat_index]
+            if not seat.player_id:
+                continue
+            seat.stack += self.auto_topup_amount
+            self.action_history.append(
+                ActionRecord(
+                    actor_id=seat.player_id,
+                    actor_name=seat.name,
+                    action="manual_topup",
+                    amount=self.auto_topup_amount,
+                    street=self.street,
+                    detail="next_hand",
+                )
+            )
+        self.pending_manual_topup_seats.clear()
 
     def _seat_positions(self) -> Dict[int, str]:
         # Important: during a hand, seats in `pending_join_seats` must not receive
@@ -242,6 +288,8 @@ class GameTable:
 
     def _clear_seat(self, seat: SeatState) -> None:
         self.auto_play_seats.discard(seat.seat_index)
+        self.pending_manual_topup_seats.discard(seat.seat_index)
+        self.hand_start_stack_by_seat_index.pop(seat.seat_index, None)
         seat.player_id = None
         seat.name = None
         seat.stack = 0
@@ -264,6 +312,9 @@ class GameTable:
         self.pending_payouts.clear()
         for seat in self.seats:
             if seat.player_id and seat.stack == 0:
+                # If the player had already requested a manual top-up, treat this auto
+                # top-up as satisfying it (avoid doubling to 600).
+                self.pending_manual_topup_seats.discard(seat.seat_index)
                 seat.stack += self.auto_topup_amount
                 self.action_history.append(
                     ActionRecord(
@@ -743,6 +794,7 @@ class GameTable:
             self.street = Street.waiting
             self.current_turn_seat = None
             self._reset_hand_state()
+            self.hand_start_stack_by_seat_index = {}
             for seat in self.seats:
                 seat.last_action = None
                 seat.hole_cards = None
@@ -773,6 +825,12 @@ class GameTable:
                 detail=f"hand:{self.hand_number}",
             )
         )
+        # Apply manual top-ups for this new hand before dealing/posting blinds.
+        self._apply_pending_manual_topups_for_new_hand()
+        # Record "hand start" stack snapshots (pre forced blinds/bets).
+        self.hand_start_stack_by_seat_index = {
+            s.seat_index: s.stack for s in self.seats if s.player_id
+        }
         deck = self._build_deck()
         self._deal_hole_cards(deck)
         self._deal_board(deck)
@@ -796,6 +854,8 @@ class GameTable:
         self.leave_after_hand_seats = set()
         self.pending_join_seats = set()
         self.pending_payouts = {}
+        self.pending_manual_topup_seats = set()
+        self.hand_start_stack_by_seat_index = {}
 
     def _post_blinds(self) -> None:
         self.big_blind_seat = None
@@ -1258,6 +1318,7 @@ class GameTable:
                     player_id=seat.player_id,
                     name=seat.name,
                     stack=seat.stack,
+                    hand_start_stack=self.hand_start_stack_by_seat_index.get(seat.seat_index),
                     position=positions.get(seat.seat_index),
                     last_action=seat.last_action,
                     hole_cards=seat.hole_cards,
@@ -1363,6 +1424,7 @@ class GameTable:
                     player_id=seat.player_id,
                     name=seat.name,
                     stack=seat.stack,
+                    hand_start_stack=self.hand_start_stack_by_seat_index.get(seat.seat_index),
                     position=positions.get(seat.seat_index),
                     last_action=seat.last_action,
                     hole_cards=hole_cards_out,

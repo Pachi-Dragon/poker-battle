@@ -14,6 +14,8 @@ export interface SeatState {
     player_id?: string | null
     name?: string | null
     stack: number
+    /** ハンド開始時点のスタック（ブラインド等の強制ベット前） */
+    hand_start_stack?: number | null
     position?: string | null
     last_action?: string | null
     last_action_amount?: number | null

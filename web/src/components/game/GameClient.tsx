@@ -91,6 +91,7 @@ export function GameClient({
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const [showMenuRandom, setShowMenuRandom] = useState(false)
     const [menuRandomValue, setMenuRandomValue] = useState<number | null>(null)
+    const [manualTopupPending, setManualTopupPending] = useState(false)
     const wasHeroTurnRef = useRef(false)
     const [isWaitPaused, setIsWaitPaused] = useState(false)
     const isWaitPausedRef = useRef(false)
@@ -647,6 +648,7 @@ export function GameClient({
         }
         if (lastAppliedHandRef.current === tableState.hand_number) return
         lastAppliedHandRef.current = tableState.hand_number
+        setManualTopupPending(false)
         setForceNextHandGaugeZero(false)
         gaugeScheduledHandRef.current = null
         clearNextHandDelayTimers()
@@ -1273,7 +1275,7 @@ export function GameClient({
                 applyRefundUncalledBet()
                 return
             }
-            if (act === "hand-start" || act === "auto-topup") return
+            if (act === "hand-start" || act === "auto-topup" || act === "manual-topup") return
 
             if (!record.actor_id) return
             const actorId = record.actor_id
@@ -1349,6 +1351,13 @@ export function GameClient({
             : `アクション制限時間 次ハンドから${pendingTimeLimitEnabled ? "オン" : "オフ"}`
     const canLeaveImmediately = Boolean(heroSeat && tableState?.street === "waiting")
     const leaveButtonLabel = leaveAfterHand ? "離席（次ハンド）" : "離席"
+    const heroHandStartStack = heroSeat?.hand_start_stack ?? null
+    const canRequestManualTopup = Boolean(
+        heroSeat && ((heroHandStartStack ?? heroSeat.stack) <= 100)
+    )
+    const manualTopupLabel = manualTopupPending
+        ? "チップ追加 予約済み（次ハンド +300）"
+        : "チップ追加（次ハンド +300）"
 
     const nextMenuRandom = () => Math.floor(Math.random() * 100) + 1
 
@@ -1634,6 +1643,31 @@ export function GameClient({
                                 }}
                             >
                                 {timeLimitButtonLabel}
+                            </button>
+                            <button
+                                type="button"
+                                className={`rounded px-3 py-2 text-sm font-semibold ${canRequestManualTopup && !manualTopupPending
+                                    ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                    : "bg-white/10 text-white/40 cursor-not-allowed"
+                                    }`}
+                                onClick={() => {
+                                    if (!canRequestManualTopup || manualTopupPending) return
+                                    sendMessage({
+                                        type: "requestManualTopup",
+                                        payload: { player_id: player.player_id },
+                                    })
+                                    setManualTopupPending(true)
+                                }}
+                                disabled={!canRequestManualTopup || manualTopupPending || !tableState}
+                                title={
+                                    manualTopupPending
+                                        ? "予約済みです"
+                                        : canRequestManualTopup
+                                            ? "次のハンド開始時に+300されます（収支には影響しません）"
+                                            : "スタックが100以下のときのみ押せます"
+                                }
+                            >
+                                {manualTopupLabel}
                             </button>
                             {heroSeat ? (
                                 <button
