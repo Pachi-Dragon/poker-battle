@@ -9,6 +9,10 @@ interface SeatCardProps {
     /** Fold/Showdown いずれかでポット獲得した勝者席の強調 */
     isPotWinner?: boolean
     isTopSeat: boolean
+    /** SB/BB 表示用（uncontested の表示補正にも使う） */
+    blinds?: { sb: number; bb: number } | null
+    /** ハンドが uncontested（全員フォールドで即決着）で終わった */
+    isUncontestedHand?: boolean
     canReserve: boolean
     /** 相手のハンドを表で表示する（ショーダウン時のみ true） */
     showHoleCards?: boolean
@@ -28,10 +32,12 @@ interface SeatCardProps {
 
 export function SeatCard({
     seat,
-    isHero: _isHero,
+    isHero,
     isCurrentTurn,
     isPotWinner = false,
     isTopSeat,
+    blinds = null,
+    isUncontestedHand = false,
     canReserve,
     showHoleCards = true,
     chipsOnlyBadge = false,
@@ -52,7 +58,18 @@ export function SeatCard({
         hasHoleCards && (seat.hole_cards ?? []).every((c) => Boolean((c ?? "").trim()))
     )
     const canShowFaceUp = Boolean(showHoleCards && hasRealHoleCards)
+    // Server-equivalent special hand (suits ignored, order ignored): {"6","9"} or {"9","2"}
+    const enableHeroHoleCardFx = (() => {
+        if (!isHero || !canShowFaceUp) return false
+        const cards = seat.hole_cards ?? []
+        if (cards.length !== 2) return false
+        const ranks = new Set(cards.map((c) => c.slice(0, -1)))
+        if (ranks.size !== 2) return false
+        const has9 = ranks.has("9")
+        return (has9 && ranks.has("6")) || (has9 && ranks.has("2"))
+    })()
     const [animatedHoleIndices, setAnimatedHoleIndices] = useState<number[]>([])
+    const [dealShineActive, setDealShineActive] = useState(false)
     const prevHoleCountRef = useRef<number>(seat.hole_cards?.length ?? 0)
     const chipPositionClass = isTopSeat
         ? "-bottom-1 translate-y-full"
@@ -64,15 +81,29 @@ export function SeatCard({
         seat.is_all_in || normalizedLastAction === "all-in"
             ? "all-in"
             : normalizedLastAction
+    // Uncontested で SB が即フォールドすると、server-side で未コール分が返金され
+    // BB の street_commit が SB 相当に見えてしまう。ここでは「ポストしたBB」を表示したい。
+    const shouldForcePostedBbDisplay = Boolean(
+        isUncontestedHand &&
+        (seat.position ?? "").toUpperCase() === "BB" &&
+        !seat.is_folded &&
+        blinds?.bb != null &&
+        blinds.bb > 0 &&
+        blinds?.sb != null &&
+        blinds.sb > 0 &&
+        blinds.bb > blinds.sb &&
+        (seat.street_commit ?? 0) === blinds.sb
+    )
+    const displayAction = shouldForcePostedBbDisplay ? "post-bb" : effectiveAction
     const actionToneClass = chipsOnlyBadge
         ? "bg-black text-white"
-        : effectiveAction === "fold"
+        : displayAction === "fold"
             ? "bg-sky-900/50 text-sky-100"
-            : effectiveAction === "call" || effectiveAction === "check"
+            : displayAction === "call" || displayAction === "check"
                 ? "bg-emerald-900/60 text-emerald-100"
-                : effectiveAction === "bet" ||
-                    effectiveAction === "raise" ||
-                    effectiveAction === "all-in"
+                : displayAction === "bet" ||
+                    displayAction === "raise" ||
+                    displayAction === "all-in"
                     ? "bg-red-900/60 text-red-200"
                     : "bg-black/70 text-white"
     const formatActionLabel = (action: string, amount: number) => {
@@ -86,10 +117,11 @@ export function SeatCard({
         if (action === "all-in") return amount > 0 ? `All-in ${amount}` : "All-in"
         return amount > 0 ? `${amount}` : null
     }
-    const actionAmount =
-        seat.last_action_amount ?? (seat.street_commit ?? 0)
+    const actionAmount = shouldForcePostedBbDisplay
+        ? (blinds?.bb ?? 0)
+        : (seat.last_action_amount ?? (seat.street_commit ?? 0))
     const commitLabel = formatActionLabel(
-        effectiveAction,
+        displayAction,
         actionAmount
     )
     const chipsOnlyValue = chipsOnlyAmount ?? seat.street_commit ?? 0
@@ -101,8 +133,8 @@ export function SeatCard({
         occupied &&
         (commitLabel !== null ||
             (seat.street_commit ?? 0) > 0 ||
-            effectiveAction === "fold" ||
-            effectiveAction === "check")
+            displayAction === "fold" ||
+            displayAction === "check")
     const isClickable = occupied && Boolean(onSelect)
     const showResult = occupied && result != null && (result.delta !== 0 || Boolean(result.label))
     const showResultDelta = Boolean(showResult && result && result.delta !== 0)
@@ -124,6 +156,9 @@ export function SeatCard({
         const nextCount = seat.hole_cards?.length ?? 0
         if (nextCount < prevCount) {
             setAnimatedHoleIndices([])
+            setDealShineActive(false)
+            prevHoleCountRef.current = nextCount
+            return
         } else if (nextCount > prevCount) {
             const indices = Array.from(
                 { length: nextCount - prevCount },
@@ -133,10 +168,22 @@ export function SeatCard({
             const timeout = window.setTimeout(() => {
                 setAnimatedHoleIndices([])
             }, cardDropAnimationMs)
+            prevHoleCountRef.current = nextCount
+            // Deal-time shine sweep (hero only, face-up only)
+            if (enableHeroHoleCardFx && nextCount >= 2) {
+                setDealShineActive(true)
+                const shineTimeout = window.setTimeout(() => {
+                    setDealShineActive(false)
+                }, 1500)
+                return () => {
+                    window.clearTimeout(timeout)
+                    window.clearTimeout(shineTimeout)
+                }
+            }
             return () => window.clearTimeout(timeout)
         }
         prevHoleCountRef.current = nextCount
-    }, [seat.hole_cards?.length])
+    }, [seat.hole_cards?.length, enableHeroHoleCardFx])
     /* eslint-enable react-hooks/set-state-in-effect */
 
     return (
@@ -253,6 +300,7 @@ export function SeatCard({
                                             className={`flex min-w-0 shrink-0 ${animatedHoleIndices.includes(index)
                                                 ? "board-card-drop"
                                                 : ""
+                                                } ${enableHeroHoleCardFx ? "hole-special-hold" : ""} ${enableHeroHoleCardFx && dealShineActive ? "hole-special-deal" : ""
                                                 }`}
                                         />
                                     ))

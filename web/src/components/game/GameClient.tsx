@@ -282,6 +282,43 @@ export function GameClient({
         nextState: TableState,
         prevState?: TableState | null
     ): TableState => {
+        // If a hand ends by fold (uncontested), keep showing the last street actions
+        // (preflop/flop/turn/river) until the next hand begins.
+        //
+        // Without this, `settlement` would fall back to "river-only" (or null),
+        // which clears the action badges and makes them fall back to `street_commit`
+        // (post-refund), confusing for fold-end hands.
+        const hasShowdownMarker = Boolean(
+            nextState.action_history?.some(
+                (a) => (a.action ?? "").toLowerCase() === "showdown"
+            )
+        )
+        if (nextState.street === "settlement" && !hasShowdownMarker) {
+            const lastFold = [...(nextState.action_history ?? [])]
+                .reverse()
+                .find((a) => (a.action ?? "").toLowerCase() === "fold")
+            const foldStreet = lastFold?.street ?? null
+            if (
+                foldStreet &&
+                foldStreet !== "waiting" &&
+                foldStreet !== "showdown" &&
+                foldStreet !== "settlement"
+            ) {
+                const base = buildStateWithStreetActions(nextState, foldStreet, prevState)
+                // Some seats (esp. blinds) may have no action record in that street due to
+                // sanitization or edge-cases, but their seat state is still folded.
+                // In fold-end hands, always keep fold shown until the next hand.
+                return {
+                    ...base,
+                    seats: base.seats.map((s) => {
+                        if (!s.player_id) return s
+                        if (!s.is_folded) return s
+                        // Folded seats should always show "Fold" (not post_sb etc).
+                        return { ...s, last_action: "fold", last_action_amount: null }
+                    }),
+                }
+            }
+        }
         if (
             prevState &&
             (nextState.street === "showdown" || nextState.street === "settlement") &&
@@ -1161,6 +1198,16 @@ export function GameClient({
             (a) => a.action?.toLowerCase() === "payout"
         )
     )
+    const isUncontestedHand = useMemo(() => {
+        if (!displayTableState) return false
+        return Boolean(
+            displayTableState.action_history?.some((a) => {
+                const act = (a.action ?? "").toLowerCase()
+                const detail = (a.detail ?? "").toLowerCase()
+                return act === "payout" && detail === "uncontested"
+            })
+        )
+    }, [displayTableState])
     const isTransitionShowingPreSettlement =
         Boolean(displayTableState) &&
         !["showdown", "settlement"].includes(displayTableState!.street) &&
@@ -1466,6 +1513,8 @@ export function GameClient({
                                             seat.player_id && potWinnerPlayerIds.has(seat.player_id)
                                         )}
                                         isTopSeat={isTopSeat}
+                                        blinds={displayBlinds}
+                                        isUncontestedHand={isUncontestedHand}
                                         canReserve={isWaitingPlayer && !seat.player_id}
                                         showHoleCards={
                                             heroSeat?.seat_index === seat.seat_index ||

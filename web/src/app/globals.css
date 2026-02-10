@@ -65,6 +65,80 @@
   animation-fill-mode: both;
 }
 
+@keyframes hole-special-hold-pulse {
+  0% {
+    box-shadow: 0 0 0 rgba(251, 191, 36, 0);
+  }
+
+  35% {
+    box-shadow:
+      0 0 10px rgba(251, 191, 36, 0.35),
+      0 0 18px rgba(147, 197, 253, 0.16);
+  }
+
+  100% {
+    box-shadow: 0 0 0 rgba(251, 191, 36, 0);
+  }
+}
+
+/* Subtle glow while holding (hero hole cards) */
+.hole-special-hold {
+  box-shadow:
+    0 0 10px rgba(251, 191, 36, 0.25),
+    0 0 18px rgba(147, 197, 253, 0.12);
+  animation: hole-special-hold-pulse 1800ms ease-in-out infinite;
+}
+
+@keyframes hole-special-shine-sweep {
+  0% {
+    transform: translateX(-140%) rotate(-20deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 0.9;
+  }
+
+  60% {
+    opacity: 0.9;
+  }
+
+  100% {
+    transform: translateX(140%) rotate(-20deg);
+    opacity: 0;
+  }
+}
+
+/* Deal-time shine sweep (temporary class for ~1.5s) */
+.hole-special-deal::before {
+  content: "";
+  position: absolute;
+  inset: -35%;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.00) 30%,
+      rgba(255, 255, 255, 0.65) 45%,
+      rgba(255, 255, 255, 0.10) 55%,
+      transparent 70%,
+      transparent 100%);
+  filter: blur(0.6px);
+  mix-blend-mode: screen;
+  animation: hole-special-shine-sweep 950ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole-special-hold {
+    animation: none;
+  }
+
+  .hole-special-deal::before {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 @media (hover: none) and (pointer: coarse) {
 
   html,
