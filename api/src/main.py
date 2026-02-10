@@ -27,7 +27,7 @@ table = GameTable(table_id="default")
 earnings_store = EarningsStore()
 allowlist_store = AllowListStore()
 HAND_DELAY_SECONDS = 1.0
-RUNOUT_DELAY_SECONDS = 1.6
+RUNOUT_DELAY_SECONDS = 2.6
 LEAVE_GRACE_SECONDS = 30.0
 GAUGE_COMPLETE_TIMEOUT_SECONDS = 30.0
 pending_leave_tasks: dict[str, asyncio.Task] = {}
@@ -223,6 +223,14 @@ async def websocket_game(websocket: WebSocket):
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
                     await schedule_leave(player_id)
+            elif message_type == "leaveNow":
+                # 即時離席（待機/未着席UIから参加画面に戻る用途）
+                player_id = payload.get("player_id") or manager.get_player(websocket)
+                if player_id:
+                    await cancel_pending_leave(player_id)
+                    await cancel_pending_disconnect(player_id)
+                    table.leave_player(player_id)
+                    await broadcast_table_state()
             elif message_type == "leaveAfterHand":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:

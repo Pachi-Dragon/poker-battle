@@ -46,6 +46,12 @@ export function SeatCard({
     const hasPosition = occupied && Boolean(seat.position)
     const isDisconnected = occupied && seat.is_connected === false
     const isFolded = occupied && seat.is_folded
+    const hasHoleCards = Boolean(occupied && seat.hole_cards && seat.hole_cards.length > 0)
+    // サーバーが相手のカードをマスクして送る場合 ["", ""] になる。表表示でも空文字は描画しない（裏面に倒す）
+    const hasRealHoleCards = Boolean(
+        hasHoleCards && (seat.hole_cards ?? []).every((c) => Boolean((c ?? "").trim()))
+    )
+    const canShowFaceUp = Boolean(showHoleCards && hasRealHoleCards)
     const [animatedHoleIndices, setAnimatedHoleIndices] = useState<number[]>([])
     const prevHoleCountRef = useRef<number>(seat.hole_cards?.length ?? 0)
     const chipPositionClass = isTopSeat
@@ -98,16 +104,17 @@ export function SeatCard({
             effectiveAction === "fold" ||
             effectiveAction === "check")
     const isClickable = occupied && Boolean(onSelect)
-    const showResult = occupied && result != null && result.delta !== 0
-    const resultDeltaLabel = showResult
-        ? `${result.delta > 0 ? "+" : ""}${result.delta}`
+    const showResult = occupied && result != null && (result.delta !== 0 || Boolean(result.label))
+    const showResultDelta = Boolean(showResult && result && result.delta !== 0)
+    const resultDeltaLabel = showResultDelta
+        ? `${result!.delta > 0 ? "+" : ""}${result!.delta}`
         : ""
     const resultDeltaClass =
-        !showResult
+        !showResultDelta
             ? ""
-            : result.delta > 0
+            : result!.delta > 0
                 ? "text-lime-300"
-                : result.delta < 0
+                : result!.delta < 0
                     ? "text-red-400"
                     : "text-white/80"
 
@@ -175,9 +182,11 @@ export function SeatCard({
                 {showResult && (
                     <div className="absolute -top-4 left-1/2 -translate-x-1/2">
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-none tabular-nums whitespace-nowrap max-w-[11rem]">
-                            <span className={`truncate ${resultDeltaClass}`}>
-                                {resultDeltaLabel}
-                            </span>
+                            {showResultDelta ? (
+                                <span className={`truncate ${resultDeltaClass}`}>
+                                    {resultDeltaLabel}
+                                </span>
+                            ) : null}
                             {result.label ? (
                                 <span
                                     className="truncate text-yellow-300"
@@ -235,12 +244,9 @@ export function SeatCard({
                     )}
                     <div className="flex w-full items-center justify-center">
                         <div className="flex w-full max-w-[calc(100%-0.5rem)] items-center justify-center gap-1">
-                            {occupied &&
-                                seat.hole_cards &&
-                                seat.hole_cards.length > 0 &&
-                                (!isFolded || showHoleCards) ? (
-                                showHoleCards ? (
-                                    seat.hole_cards.map((card, index) => (
+                            {hasHoleCards && (!isFolded || showHoleCards) ? (
+                                canShowFaceUp ? (
+                                    (seat.hole_cards ?? []).map((card, index) => (
                                         <CardBadge
                                             key={`${card}-${index}`}
                                             card={card}
@@ -251,7 +257,7 @@ export function SeatCard({
                                         />
                                     ))
                                 ) : (
-                                    seat.hole_cards.map((_, index) => (
+                                    (seat.hole_cards ?? []).map((_, index) => (
                                         <span
                                             key={`back-${index}`}
                                             className="inline-flex h-7 w-[44px] shrink-0 items-center justify-center rounded border border-white/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 px-2 py-1 shadow-inner"

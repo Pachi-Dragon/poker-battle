@@ -117,6 +117,10 @@ export function GameClient({
         "hands" | "win" | null
     >(null)
     const settlementPhaseTimeoutRef = useRef<number | null>(null)
+    /** 自動ランアウトを検知したハンド番号（ショーダウン直後の公開ディレイ中も公開を維持するため） */
+    const [autoRunoutHandNumber, setAutoRunoutHandNumber] = useState<number | null>(
+        null
+    )
 
     const scheduleHeartbeat = () => {
         if (heartbeatTimeoutRef.current) {
@@ -215,7 +219,8 @@ export function GameClient({
 
     const buildStateWithStreetActions = (
         state: TableState,
-        street: TableState["street"]
+        street: TableState["street"],
+        prevState?: TableState | null
     ): TableState => {
         const lastActionBySeat = new Map<
             string,
@@ -229,16 +234,45 @@ export function GameClient({
                 amount: action.amount,
             })
         })
+        const prevByIndex = new Map<number, { last_action?: string | null; last_action_amount?: number | null }>()
+        prevState?.seats?.forEach((s) => {
+            prevByIndex.set(s.seat_index, {
+                last_action: s.last_action,
+                last_action_amount: s.last_action_amount,
+            })
+        })
+        const autoRunoutLike = Boolean(
+            (state.current_turn_seat === null || state.current_turn_seat === undefined) &&
+            ["preflop", "flop", "turn", "river"].includes(state.street) &&
+            state.seats.some((s) => s.player_id && !s.is_folded && s.is_all_in) &&
+            state.seats.filter((s) => s.player_id && !s.is_folded).length >= 2
+        )
         return {
             ...state,
             seats: state.seats.map((seat) => ({
                 ...seat,
-                last_action: seat.player_id
-                    ? lastActionBySeat.get(seat.player_id)?.action ?? null
-                    : null,
-                last_action_amount: seat.player_id
-                    ? lastActionBySeat.get(seat.player_id)?.amount ?? null
-                    : null,
+                last_action: (() => {
+                    if (!seat.player_id) return null
+                    const fromThisStreet = lastActionBySeat.get(seat.player_id)?.action ?? null
+                    if (fromThisStreet) return fromThisStreet
+                    // 自動ランアウト中は、オールイン金額だけ前ストリートから引き継ぐ
+                    if (!autoRunoutLike) return null
+                    const prev = prevByIndex.get(seat.seat_index)
+                    const prevAct = (prev?.last_action ?? "").toLowerCase().replace(/_/g, "-")
+                    if (prevAct !== "all-in") return null
+                    return "all-in"
+                })(),
+                last_action_amount: (() => {
+                    if (!seat.player_id) return null
+                    const fromThisStreet = lastActionBySeat.get(seat.player_id)?.amount ?? null
+                    if (fromThisStreet !== null && fromThisStreet !== undefined) return fromThisStreet
+                    if (!autoRunoutLike) return null
+                    const prev = prevByIndex.get(seat.seat_index)
+                    const prevAct = (prev?.last_action ?? "").toLowerCase().replace(/_/g, "-")
+                    if (prevAct !== "all-in") return null
+                    const amt = prev?.last_action_amount
+                    return (amt !== null && amt !== undefined && amt > 0) ? amt : null
+                })(),
             })),
         }
     }
@@ -252,19 +286,12 @@ export function GameClient({
             (nextState.street === "showdown" || nextState.street === "settlement") &&
             prevState.hand_number === nextState.hand_number
         ) {
-            const lastActionStreet =
-                [...nextState.action_history]
-                    .reverse()
-                    .find(
-                        (action) =>
-                            Boolean(action.actor_id) &&
-                            action.street !== "settlement" &&
-                            action.street !== "showdown"
-                    )?.street ??
-                prevState.street
-            return buildStateWithStreetActions(nextState, lastActionStreet)
+            // Showdown時の「最後のアクション表示」はリバーのみ参照する。
+            // 自動ランアウト（プリ/フロ/ターンで全員all-in等）だとリバーでアクションが無いので、
+            // 過去ストリートのアクションを表示しない（= null にする）のが期待挙動。
+            return buildStateWithStreetActions(nextState, "river")
         }
-        return buildStateWithStreetActions(nextState, nextState.street)
+        return buildStateWithStreetActions(nextState, nextState.street, prevState)
     }
 
     const potExcludingCurrentStreet = (state: TableState): number => {
@@ -626,6 +653,7 @@ export function GameClient({
         setIsNextHandAwaiting(false)
         setRevealByUser(false)
         setSettlementDisplayPhase(null)
+        setAutoRunoutHandNumber(null)
         if (settlementPhaseTimeoutRef.current) {
             window.clearTimeout(settlementPhaseTimeoutRef.current)
             settlementPhaseTimeoutRef.current = null
@@ -728,6 +756,29 @@ export function GameClient({
         ) {
             return
         }
+        const isAutoRunoutHand = Boolean(
+            autoRunoutHandNumber !== null &&
+            tableState.hand_number === autoRunoutHandNumber
+        )
+        if (isAutoRunoutHand) {
+            // 自動ランアウトはショーダウン演出のディレイ不要：即 win フェーズへ
+            setSettlementDisplayPhase("win")
+            const state = tableStateRef.current
+            if (
+                state &&
+                state.street === "settlement" &&
+                !isNextHandDelayActiveRef.current &&
+                !nextHandStartTimeoutRef.current
+            ) {
+                if (gaugeScheduledHandRef.current !== state.hand_number) {
+                    gaugeScheduledHandRef.current = state.hand_number
+                    scheduleNextHandDelay(state, revealToGaugeDelayMs, {
+                        onGaugeComplete: sendNextHandGaugeComplete,
+                    })
+                }
+            }
+            return
+        }
         setSettlementDisplayPhase("hands")
         if (settlementPhaseTimeoutRef.current) {
             window.clearTimeout(settlementPhaseTimeoutRef.current)
@@ -756,6 +807,7 @@ export function GameClient({
         tableState?.hand_number,
         hasShowdown,
         settlementDisplayPhase,
+        autoRunoutHandNumber,
         revealHandDelayMs,
         revealToGaugeDelayMs,
     ])
@@ -814,12 +866,21 @@ export function GameClient({
             return
         }
         if (tableState.street === "showdown") {
+            const isAutoRunoutHand = Boolean(
+                autoRunoutHandNumber !== null &&
+                tableState.hand_number === autoRunoutHandNumber
+            )
             setRevealOpponents(false)
             revealCompletedAtRef.current = Date.now()
-            revealOpponentsTimeoutRef.current = window.setTimeout(() => {
-                revealOpponentsTimeoutRef.current = null
+            if (isAutoRunoutHand) {
+                // 自動ランアウトは公開ディレイ不要：即公開
                 setRevealOpponents(true)
-            }, revealHandDelayMs)
+            } else {
+                revealOpponentsTimeoutRef.current = window.setTimeout(() => {
+                    revealOpponentsTimeoutRef.current = null
+                    setRevealOpponents(true)
+                }, revealHandDelayMs)
+            }
             if (
                 pendingNextHandRef.current &&
                 !isNextHandDelayActiveRef.current &&
@@ -875,6 +936,7 @@ export function GameClient({
         revealByUser,
         revealHandDelayMs,
         settlementDisplayPhase,
+        autoRunoutHandNumber,
     ])
 
     useEffect(() => {
@@ -947,6 +1009,19 @@ export function GameClient({
         }
     }
 
+    const handleLeaveNowToJoin = () => {
+        // 未着席/待機中はゲーム状況を待たずに参加画面へ戻す
+        sendMessage({
+            type: "leaveNow",
+            payload: { player_id: player.player_id },
+        })
+        if (embeddedInHome && onBackToHome) {
+            onBackToHome()
+        } else {
+            router.back()
+        }
+    }
+
     const handleReset = () => {
         sendMessage({ type: "resetTable" })
     }
@@ -1007,9 +1082,26 @@ export function GameClient({
         isNextHandDelayPending ||
         (inSettlementWithShowdown && settlementDisplayPhase === "win")
     const showBetweenHandsControls = showNextHandGauge || isNextHandAwaiting
-    const showStopNext = showNextHandGauge
-    const leaveSlot =
-        !showBetweenHandsControls ? "normal" : leaveAfterHand ? "leave-done" : "leave"
+    // STOP/NEXT は「このハンドに参加しているプレイヤー」だけに出す
+    // - 未着席: heroSeat が無い
+    // - 次ハンドから参加（pending join）: hole_cards がまだ配られていない
+    const isHeroParticipatingInCurrentHand = Boolean(
+        heroSeat?.hole_cards && heroSeat.hole_cards.length >= 2
+    )
+    const showStopNext = showNextHandGauge && isHeroParticipatingInCurrentHand
+    const showImmediateLeave = Boolean(
+        // 未着席
+        !heroSeat ||
+        // 着席済みだがテーブル開始前（waiting）
+        tableState?.street === "waiting"
+    )
+    const leaveSlot = showImmediateLeave
+        ? "leave"
+        : !showBetweenHandsControls
+            ? "normal"
+            : leaveAfterHand
+                ? "leave-done"
+                : "leave"
     const callSlot =
         tableState?.street !== "settlement" || hasShowdown
             ? "normal"
@@ -1032,6 +1124,36 @@ export function GameClient({
         displayTableState &&
         ["showdown", "settlement"].includes(displayTableState.street)
     )
+    const inAutoRunout = Boolean(
+        displayTableState &&
+        ["preflop", "flop", "turn", "river"].includes(displayTableState.street) &&
+        (displayTableState.current_turn_seat === null ||
+            displayTableState.current_turn_seat === undefined) &&
+        displayTableState.seats.some((s) => s.player_id && !s.is_folded && s.is_all_in) &&
+        displayTableState.seats.filter((s) => s.player_id && !s.is_folded).length >= 2
+    )
+    // 自動ランアウトが始まったハンドでは、席の「アクション表示（チップバッジ）」は復活させない。
+    // ただしプリフロップでオールインした直後（preflop表示中）は出しておき、フロップ以降で非表示。
+    const hideSeatActionBadges = Boolean(
+        displayTableState &&
+        displayTableState.street !== "preflop" &&
+        (Boolean(inAutoRunout) ||
+            (autoRunoutHandNumber !== null &&
+                displayTableState.hand_number === autoRunoutHandNumber))
+    )
+    const autoRunoutHandActive = Boolean(
+        inAutoRunout ||
+        (displayTableState &&
+            autoRunoutHandNumber !== null &&
+            displayTableState.hand_number === autoRunoutHandNumber)
+    )
+
+    useEffect(() => {
+        if (!displayTableState) return
+        if (!inAutoRunout) return
+        if (autoRunoutHandNumber === displayTableState.hand_number) return
+        setAutoRunoutHandNumber(displayTableState.hand_number)
+    }, [inAutoRunout, displayTableState, autoRunoutHandNumber])
     const hasPayoutInHistory = Boolean(
         displayTableState?.action_history?.some(
             (a) => a.action?.toLowerCase() === "payout"
@@ -1341,11 +1463,12 @@ export function GameClient({
                                             (inShowdownStreet &&
                                                 revealOpponents &&
                                                 !seat.is_folded) ||
+                                            (autoRunoutHandActive && !seat.is_folded) ||
                                             (displayTableState?.street === "settlement" &&
                                                 !hasShowdown &&
                                                 isRevealed)
                                         }
-                                        hideCommitBadge={hideActionAmounts}
+                                        hideCommitBadge={hideSeatActionBadges || hideActionAmounts}
                                         result={seatResultsByIndex.get(seat.seat_index) ?? null}
                                         onReserve={() => handleReserveSeat(seat.seat_index)}
                                         onSelect={() => openEarningsForSeat(seat)}
@@ -1364,8 +1487,9 @@ export function GameClient({
                             {displayTableState && (
                                 <BoardPot
                                     table={displayTableState}
-                                    canStart={canStartHand}
+                                    canStart={canStartHand && Boolean(heroSeat)}
                                     onStart={handleStartHand}
+                                    hideStartControls={!heroSeat}
                                     saveStats={saveStats}
                                     onSaveStatsChange={(value) => {
                                         setSaveStats(value)
@@ -1424,6 +1548,10 @@ export function GameClient({
                                         interactionEnabled={actionControlsEnabled}
                                         leaveSlot={leaveSlot}
                                         onLeaveAfterHand={() => {
+                                            if (showImmediateLeave) {
+                                                handleLeaveNowToJoin()
+                                                return
+                                            }
                                             // 5秒ゲージ中にSTOP済みなら、離席＝NEXT扱いで進める（ゲージを0にして進行再開）
                                             if (showNextHandGauge && isWaitPaused) {
                                                 handleNextHandDelayToggle()

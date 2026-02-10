@@ -1329,6 +1329,12 @@ class GameTable:
             if action.action == "hand_reveal" and action.actor_id:
                 revealed_ids.add(action.actor_id)
 
+        auto_runout = (
+            self.current_turn_seat is None
+            and self.street in (Street.preflop, Street.flop, Street.turn, Street.river)
+            and self.should_auto_runout()
+        )
+
         connected = connected_player_ids or set()
         seats: List[SeatState] = []
         for seat in self.seats:
@@ -1342,7 +1348,7 @@ class GameTable:
                 if viewer_player_id and seat.player_id == viewer_player_id:
                     hole_cards_out = seat.hole_cards
                 # Show actual cards during showdown (only non-folded seats)
-                elif has_showdown and seat.seat_index not in self.folded_seats:
+                elif (has_showdown or auto_runout) and seat.seat_index not in self.folded_seats:
                     hole_cards_out = seat.hole_cards
                 # Show actual cards if explicitly revealed in uncontested settlement
                 elif self.street == Street.settlement and seat.player_id and seat.player_id in revealed_ids:

@@ -6,6 +6,8 @@ interface BoardPotProps {
     table: TableState
     canStart?: boolean
     onStart?: () => void
+    /** 未着席などでスタート操作UIを隠す（枠は維持） */
+    hideStartControls?: boolean
     /** 収支を保存するか（「収支を保存する」にチェックで true） */
     saveStats?: boolean
     onSaveStatsChange?: (value: boolean) => void
@@ -50,6 +52,7 @@ export function BoardPot({
     table,
     canStart = false,
     onStart,
+    hideStartControls = false,
     saveStats = false,
     onSaveStatsChange,
     blinds,
@@ -189,27 +192,33 @@ export function BoardPot({
             {/* スタート時はボードと同じ枠で上に重ねて表示（枠サイズを変えず固定化） */}
             {showStart && (
                 <div className="absolute inset-0 rounded-2xl border border-white/20 bg-slate-950 px-4 py-2 flex flex-col items-center justify-center gap-1.5 text-white">
-                    <button
-                        type="button"
-                        className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
-                            ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                            : "bg-white/10 text-white/40 cursor-not-allowed"
-                            }`}
-                        onClick={onStart}
-                        disabled={!canStart}
-                    >
-                        誰かがここを押すとスタート
-                    </button>
-                    {onSaveStatsChange && (
-                        <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
-                            <input
-                                type="checkbox"
-                                checked={saveStats}
-                                onChange={(e) => onSaveStatsChange(e.target.checked)}
-                                className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
-                            />
-                            収支を保存する
-                        </label>
+                    {hideStartControls ? (
+                        <div className="text-xs text-white/70">テーブル待機中</div>
+                    ) : (
+                        <>
+                            <button
+                                type="button"
+                                className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
+                                    ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                    : "bg-white/10 text-white/40 cursor-not-allowed"
+                                    }`}
+                                onClick={onStart}
+                                disabled={!canStart}
+                            >
+                                誰かがここを押すとスタート
+                            </button>
+                            {onSaveStatsChange && (
+                                <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
+                                    <input
+                                        type="checkbox"
+                                        checked={saveStats}
+                                        onChange={(e) => onSaveStatsChange(e.target.checked)}
+                                        className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
+                                    />
+                                    収支を保存する
+                                </label>
+                            )}
+                        </>
                     )}
                 </div>
             )}
