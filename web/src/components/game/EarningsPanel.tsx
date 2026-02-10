@@ -30,7 +30,7 @@ export function EarningsPanel({
 }: EarningsPanelProps) {
     return (
         <div
-            className={`rounded-xl border border-white/20 bg-white/10 p-4 text-white ${className ?? ""}`}
+            className={`min-w-0 rounded-xl border border-white/20 bg-white/10 p-4 text-white ${className ?? ""}`}
         >
             <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-white/90">{title}</div>
@@ -50,14 +50,14 @@ export function EarningsPanel({
             ) : error ? (
                 <div className="mt-2 text-xs text-amber-200">{error}</div>
             ) : (
-                <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
+                <div className="mt-3 grid grid-cols-3 gap-3 text-xs min-w-0">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
                         <div className="text-white/60">ハンド</div>
                         <div className="mt-1 text-sm font-semibold">
                             {summary?.hands ?? 0}
                         </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
                         <div className="text-white/60">収支</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
@@ -67,7 +67,7 @@ export function EarningsPanel({
                             {formatSigned(summary?.chips_delta ?? 0)}
                         </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
                         <div className="text-white/60">収支/100hand</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
@@ -85,13 +85,13 @@ export function EarningsPanel({
                             )}
                         </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
                         <div className="text-white/60">ハンド (69,92)</div>
                         <div className="mt-1 text-sm font-semibold">
                             {summary?.hands_69_92 ?? 0}
                         </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
                         <div className="text-white/60">収支 (69,92)</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
@@ -101,8 +101,8 @@ export function EarningsPanel({
                             {formatSigned(summary?.chips_delta_69_92 ?? 0)}
                         </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/30 p-2">
-                        <div className="text-white/60">収支/100hand (69,92)</div>
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-2 min-w-0">
+                        <div className="text-white/60 truncate" title="収支/100hand (69,92)">収支/100hand (69,92)</div>
                         <div
                             className={`mt-1 text-sm font-semibold ${signedToneClass(
                                 per100(

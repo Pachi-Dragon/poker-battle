@@ -2,6 +2,14 @@
 
 import { ActionPayload, ActionType, TableState } from "@/lib/game/types"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
+
+/** Fold枠に表示: 通常 | 離席ボタン | 離席済み（—） */
+type LeaveSlot = "normal" | "leave" | "leave-done"
+/** Call枠に表示: 通常 | ハンド公開ボタン | 公開済み（—） */
+type CallSlot = "normal" | "reveal" | "reveal-done"
+/** Raise枠に表示: 通常 | NEXT/STOPボタン */
+type RaiseSlot = "normal" | "stop-next"
 
 interface ActionControlsProps {
     table: TableState | null
@@ -10,6 +18,16 @@ interface ActionControlsProps {
     className?: string
     forceAllFold?: boolean
     interactionEnabled?: boolean
+    /** 離席をFold枠に表示するときの状態 */
+    leaveSlot?: LeaveSlot
+    onLeaveAfterHand?: () => void
+    /** ハンド公開をCall枠に表示するときの状態 */
+    callSlot?: CallSlot
+    onRevealHand?: () => void
+    /** NEXT/STOPをRaise枠に表示するとき */
+    raiseSlot?: RaiseSlot
+    isWaitPaused?: boolean
+    onNextHandDelayToggle?: () => void
 }
 
 function getActionButtonClass(action: ActionType) {
@@ -52,6 +70,8 @@ function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max)
 }
 
+const emptySlotClass = "rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/40 cursor-default whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+
 export function ActionControls({
     table,
     playerId,
@@ -59,6 +79,13 @@ export function ActionControls({
     className = "",
     forceAllFold = false,
     interactionEnabled = true,
+    leaveSlot = "normal",
+    onLeaveAfterHand,
+    callSlot = "normal",
+    onRevealHand,
+    raiseSlot = "normal",
+    isWaitPaused = false,
+    onNextHandDelayToggle,
 }: ActionControlsProps) {
     const [betSize, setBetSize] = useState(3)
     const [amountOverlayOpen, setAmountOverlayOpen] = useState(false)
@@ -67,6 +94,13 @@ export function ActionControls({
     const forcedByTimerRef = useRef(false)
     const lastAutoActionRef = useRef<string | null>(null)
     const prevStreetRef = useRef<TableState["street"] | null>(table?.street ?? null)
+    const quickBetScrollRef = useRef<HTMLDivElement | null>(null)
+    const amountOverlayButtonRef = useRef<HTMLButtonElement | null>(null)
+    const amountOverlayPanelRef = useRef<HTMLDivElement | null>(null)
+    const [amountOverlayPos, setAmountOverlayPos] = useState<{
+        top: number
+        right: number
+    } | null>(null)
     const isTurn = useMemo(() => {
         if (!table) return false
         const seat = table.seats.find((item) => item.player_id === playerId)
@@ -138,6 +172,11 @@ export function ActionControls({
         setBetSize((prev) => clamp(prev + delta, sliderMin, sliderMax))
     }
 
+    const resetQuickBetScroll = () => {
+        if (!quickBetScrollRef.current) return
+        quickBetScrollRef.current.scrollLeft = 0
+    }
+
     const setBetTo = (value: number) => {
         setBetSize(clamp(Math.round(value), sliderMin, sliderMax))
     }
@@ -145,6 +184,7 @@ export function ActionControls({
     const handleAmountAction = (action: ActionType) => {
         const amount = action === "all-in" ? undefined : effectiveBetSize
         setAmountOverlayOpen(false)
+        resetQuickBetScroll()
         onAction({
             player_id: playerId,
             action,
@@ -212,195 +252,295 @@ export function ActionControls({
         }
     }, [isTurnReady])
 
+    const updateAmountOverlayPos = () => {
+        const btn = amountOverlayButtonRef.current
+        if (!btn) return
+        const rect = btn.getBoundingClientRect()
+        // right-based positioning so it stays aligned even if container width changes
+        const right = Math.max(8, window.innerWidth - rect.right)
+        // temporary top (will be adjusted after panel measures)
+        const top = Math.max(8, rect.top - 8)
+        setAmountOverlayPos({ top, right })
+    }
+
+    useEffect(() => {
+        if (!amountOverlayOpen) return
+        updateAmountOverlayPos()
+        const handle = () => updateAmountOverlayPos()
+        window.addEventListener("resize", handle)
+        // capture scroll on any scroll container
+        window.addEventListener("scroll", handle, true)
+        return () => {
+            window.removeEventListener("resize", handle)
+            window.removeEventListener("scroll", handle, true)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [amountOverlayOpen])
+
+    useEffect(() => {
+        if (!amountOverlayOpen) return
+        if (!amountOverlayPos) return
+        const btn = amountOverlayButtonRef.current
+        const panel = amountOverlayPanelRef.current
+        if (!btn || !panel) return
+        const rect = btn.getBoundingClientRect()
+        const panelRect = panel.getBoundingClientRect()
+        const margin = 8
+        const desiredTop = rect.top - panelRect.height - margin
+        const top = Math.max(8, desiredTop)
+        const right = Math.max(8, window.innerWidth - rect.right)
+        // avoid pointless state churn
+        if (top !== amountOverlayPos.top || right !== amountOverlayPos.right) {
+            setAmountOverlayPos({ top, right })
+        }
+    }, [amountOverlayOpen, amountOverlayPos])
+
+    const amountOverlayNode =
+        amountOverlayOpen &&
+        amountOverlayPos &&
+        typeof document !== "undefined" &&
+        createPortal(
+            <div className="fixed inset-0 z-[9998] pointer-events-none">
+                <div
+                    ref={amountOverlayPanelRef}
+                    className="pointer-events-auto fixed z-[9999] min-w-[130px] rounded-xl border border-white/20 bg-slate-900 px-4 py-4 shadow-xl flex gap-4 items-stretch"
+                    style={{ top: amountOverlayPos.top, right: amountOverlayPos.right }}
+                    role="dialog"
+                    aria-label="ベット額を調整"
+                >
+                    <div className="flex flex-col gap-2 shrink-0 justify-center">
+                        {[
+                            { label: "+5", delta: 5 },
+                            { label: "+1", delta: 1 },
+                            { label: "-1", delta: -1 },
+                            { label: "-5", delta: -5 },
+                        ].map(({ label, delta }) => (
+                            <button
+                                key={label}
+                                type="button"
+                                className="w-12 h-10 rounded-lg bg-white/20 hover:bg-white/30 text-white text-lg font-semibold disabled:opacity-50 disabled:pointer-events-none"
+                                onClick={() => adjustBet(delta)}
+                                disabled={!table || sliderMin >= sliderMax}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex flex-col items-center justify-center gap-1">
+                        <div className="h-48 w-8 flex items-center justify-center shrink-0">
+                            <input
+                                type="range"
+                                min={sliderMin}
+                                max={sliderMax}
+                                value={effectiveBetSize}
+                                onChange={(e) => setBetSize(Number(e.target.value))}
+                                className="vertical-slider w-48 h-7 appearance-none bg-transparent cursor-pointer disabled:opacity-50"
+                                style={{
+                                    transform: "rotate(-90deg)",
+                                    transformOrigin: "center center",
+                                }}
+                                disabled={!table || sliderMin >= sliderMax}
+                            />
+                        </div>
+                        <span className="text-sm font-semibold text-white tabular-nums">
+                            {effectiveBetSize}
+                        </span>
+                    </div>
+                </div>
+            </div>,
+            document.body
+        )
+
+    useEffect(() => {
+        if (isTurnReady) {
+            resetQuickBetScroll()
+        }
+    }, [isTurnReady, canBet, canRaise, table?.hand_number])
+
     return (
-        <div className={`rounded-2xl border border-white/20 bg-white/10 px-3 pt-2.5 pb-1.5 text-white flex flex-col gap-1.5 ${className}`}>
-            <div
-                className={`flex items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-1.5 h-[2.5rem] ${isTurnReady && (canBet || canRaise)
-                    ? ""
-                    : "invisible pointer-events-none"
-                    }`}
-            >
-                {(canBet
-                    ? betQuickPercents.map((percent) => ({
-                        key: `${percent}`,
-                        label: `${percent}%`,
-                        onClick: () =>
-                            setBetTo((table?.pot ?? 0) * (percent / 100)),
-                    }))
-                    : raiseQuickMultipliers.map((mult) => ({
-                        key: `${mult}`,
-                        label: `×${mult}`,
-                        onClick: () =>
-                            setBetTo((table?.current_bet ?? sliderMin) * mult),
-                    }))
-                ).map(({ key, label, onClick }) => (
+        <>
+            <div className={`rounded-2xl border border-white/20 bg-white/10 px-3 pt-2.5 pb-1.5 text-white flex flex-col gap-1.5 min-h-0 h-full ${className}`}>
+                <div
+                    ref={quickBetScrollRef}
+                    className={`flex items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-md bg-white/10 px-1.5 h-[2.5rem] ${isTurnReady && (canBet || canRaise)
+                        ? ""
+                        : "invisible pointer-events-none"
+                        }`}
+                >
+                    {(canBet
+                        ? betQuickPercents.map((percent) => ({
+                            key: `${percent}`,
+                            label: `${percent}%`,
+                            onClick: () =>
+                                setBetTo((table?.pot ?? 0) * (percent / 100)),
+                        }))
+                        : raiseQuickMultipliers.map((mult) => ({
+                            key: `${mult}`,
+                            label: `×${mult}`,
+                            onClick: () =>
+                                setBetTo((table?.current_bet ?? sliderMin) * mult),
+                        }))
+                    ).map(({ key, label, onClick }) => (
+                        <button
+                            key={key}
+                            type="button"
+                            className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25"
+                            onClick={onClick}
+                        >
+                            {label}
+                        </button>
+                    ))}
                     <button
-                        key={key}
                         type="button"
                         className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25"
-                        onClick={onClick}
+                        onClick={() => setBetTo(sliderMax)}
                     >
-                        {label}
+                        all-in
                     </button>
-                ))}
-                <button
-                    type="button"
-                    className="h-full min-w-[4rem] rounded bg-white/15 px-2 text-xs font-semibold text-white/80 hover:bg-white/25"
-                    onClick={() => setBetTo(sliderMax)}
-                >
-                    all-in
-                </button>
-            </div>
-            <div className="flex gap-3 items-stretch min-h-[7.5rem]">
-                {/* 左: Bet/Raise+矢印, Check/Call, Fold（枠いっぱい幅） */}
-                <div className="grid grid-rows-3 gap-1.5 flex-1 min-w-0 min-h-0">
-                    {/* Raise と矢印上ボタン（△の上にスライダーパネルが出現）・Call/Foldと同じ行高さ */}
-                    {betRaiseButton ? (
-                        <div className="relative flex gap-1.5 h-full min-h-0">
-                            <button
-                                type="button"
-                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
-                                onClick={() => handleAmountAction(betRaiseButton.action)}
-                                disabled={!table || !playerId || !isTurn}
-                            >
-                                {betRaiseButton.label}
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded px-2 py-1.5 text-sm font-semibold bg-white/20 hover:bg-white/30 shrink-0 h-full flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none w-10"
-                                onClick={() => setAmountOverlayOpen((v) => !v)}
-                                disabled={!table || sliderMin >= sliderMax}
-                                aria-label="ベット額を調整"
-                                aria-expanded={amountOverlayOpen}
-                            >
-                                <span className="text-lg leading-none" aria-hidden>▲</span>
-                            </button>
-                            {/* 三角形の直上にスライダー＋±ボタンを表示 */}
-                            {amountOverlayOpen && (
-                                <div
-                                    className="absolute right-0 bottom-full mb-1 z-50 rounded-xl border border-white/20 bg-slate-900 px-4 py-4 shadow-xl flex gap-4 items-stretch"
-                                    role="dialog"
-                                    aria-label="ベット額を調整"
+                </div>
+                <div className="flex flex-1 gap-3 items-stretch min-h-0">
+                    {/* 左: Bet/Raise+矢印, Check/Call, Fold（枠いっぱい幅・縦均等・余白時は均一に伸長） */}
+                    <div className="grid grid-rows-3 gap-1.5 flex-1 min-w-0 min-h-0">
+                        {/* Raise と矢印上ボタン（△の上にスライダーパネルが出現）・Call/Foldと同じ行高さ */}
+                        {raiseSlot === "stop-next" ? (
+                            <div className="flex gap-1.5 h-full min-h-0">
+                                <button
+                                    type="button"
+                                    className={`rounded px-2.5 py-1.5 text-sm font-semibold whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${isWaitPaused
+                                        ? "bg-white/20 text-white/80 hover:bg-white/30"
+                                        : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                                        }`}
+                                    onClick={() => onNextHandDelayToggle?.()}
                                 >
-                                    <div className="flex flex-col gap-2 shrink-0 justify-center">
-                                        {[
-                                            { label: "+5", delta: 5 },
-                                            { label: "+1", delta: 1 },
-                                            { label: "-1", delta: -1 },
-                                            { label: "-5", delta: -5 },
-                                        ].map(({ label, delta }) => (
-                                            <button
-                                                key={label}
-                                                type="button"
-                                                className="w-12 h-10 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold disabled:opacity-50 disabled:pointer-events-none"
-                                                onClick={() => adjustBet(delta)}
-                                                disabled={!table || sliderMin >= sliderMax}
-                                            >
-                                                {label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="flex flex-col items-center justify-center gap-1">
-                                        <div className="h-40 w-6 flex items-center justify-center shrink-0">
-                                            <input
-                                                type="range"
-                                                min={sliderMin}
-                                                max={sliderMax}
-                                                value={effectiveBetSize}
-                                                onChange={(e) => setBetSize(Number(e.target.value))}
-                                                className="vertical-slider w-40 h-6 appearance-none bg-transparent cursor-pointer disabled:opacity-50"
-                                                style={{
-                                                    transform: "rotate(-90deg)",
-                                                    transformOrigin: "center center",
-                                                }}
-                                                disabled={!table || sliderMin >= sliderMax}
-                                            />
-                                        </div>
-                                        <span className="text-sm font-semibold text-white tabular-nums">
-                                            {effectiveBetSize}
-                                        </span>
-                                    </div>
+                                    {isWaitPaused ? "NEXT" : "STOP"}
+                                </button>
+                                <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
+                                    <span className="text-white/30 text-lg leading-none">▲</span>
                                 </div>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="flex gap-1.5 h-full min-h-0">
-                            <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center">
+                            </div>
+                        ) : betRaiseButton ? (
+                            <div className="relative flex gap-1.5 h-full min-h-0">
+                                <button
+                                    type="button"
+                                    className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
+                                    onClick={() => handleAmountAction(betRaiseButton.action)}
+                                    disabled={!table || !playerId || !isTurn}
+                                >
+                                    {betRaiseButton.label}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="rounded px-2 py-1.5 text-sm font-semibold bg-white/20 hover:bg-white/30 shrink-0 h-full flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none w-10"
+                                    onClick={() => setAmountOverlayOpen((v) => !v)}
+                                    disabled={!table || sliderMin >= sliderMax}
+                                    aria-label="ベット額を調整"
+                                    aria-expanded={amountOverlayOpen}
+                                    ref={amountOverlayButtonRef}
+                                >
+                                    <span className="text-lg leading-none" aria-hidden>▲</span>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-1.5 h-full min-h-0">
+                                <div className={emptySlotClass + " flex-1 min-w-0"}>
+                                    —
+                                </div>
+                                <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
+                                    <span className="text-white/30 text-lg leading-none">▲</span>
+                                </div>
+                            </div>
+                        )}
+                        {callSlot === "reveal" ? (
+                            <button
+                                type="button"
+                                className="rounded px-2.5 py-1.5 text-sm font-semibold bg-emerald-400/90 text-slate-900 hover:bg-emerald-300 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                                onClick={() => onRevealHand?.()}
+                            >
+                                ハンドを公開する
+                            </button>
+                        ) : callSlot === "reveal-done" ? (
+                            <div className={emptySlotClass}>
                                 —
                             </div>
-                            <div className="rounded px-2 py-1.5 shrink-0 w-10 h-full flex items-center justify-center bg-white/5 border border-white/10" aria-hidden>
-                                <span className="text-white/30 text-lg leading-none">▲</span>
-                            </div>
-                        </div>
-                    )}
-                    {checkCallBtn ? (
-                        <button
-                            type="button"
-                            className="rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
-                            onClick={() => {
-                                if (checkCallBtn)
+                        ) : checkCallBtn ? (
+                            <button
+                                type="button"
+                                className="rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 bg-emerald-500/80 hover:bg-emerald-500 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                                onClick={() => {
+                                    if (checkCallBtn)
+                                        resetQuickBetScroll()
                                     onAction({
                                         player_id: playerId,
                                         action: checkCallBtn.action,
                                         amount: undefined,
                                     })
-                            }}
-                            disabled={!table || !playerId || !isTurn}
-                        >
-                            {checkCallBtn.label}
-                        </button>
-                    ) : (
-                        <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center">
-                            —
-                        </div>
-                    )}
-                    {isTurnReady ? (
-                        <button
-                            type="button"
-                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${foldBlocked
-                                ? "bg-sky-300/50 text-white/70"
-                                : "bg-sky-500/80 hover:bg-sky-500"
-                                }`}
-                            onClick={() => {
-                                if (foldBlocked) return
-                                onAction({
-                                    player_id: playerId,
-                                    action: "fold",
-                                    amount: undefined,
-                                })
-                            }}
-                            disabled={!table || !playerId || foldBlocked || forceAllFold}
-                        >
-                            Fold
-                        </button>
-                    ) : showAllFoldToggle ? (
-                        <button
-                            type="button"
-                            className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${allFoldEnabled
-                                ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
-                                : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
-                                }`}
-                            onClick={() => {
-                                if (forceAllFold) return
-                                setAllFoldEnabled((prev) => !prev)
-                            }}
-                            disabled={!table || !playerId || forceAllFold}
-                        >
-                            {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
-                        </button>
-                    ) : (
-                        <div className="rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 text-white/50 cursor-not-allowed whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center">
-                            —
-                        </div>
-                    )}
+                                }}
+                                disabled={!table || !playerId || !isTurn}
+                            >
+                                {checkCallBtn.label}
+                            </button>
+                        ) : (
+                            <div className={emptySlotClass}>
+                                —
+                            </div>
+                        )}
+                        {leaveSlot === "leave" ? (
+                            <button
+                                type="button"
+                                className="rounded px-2.5 py-1.5 text-sm font-semibold bg-red-800/70 text-white/90 hover:bg-red-700/70 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center"
+                                onClick={() => onLeaveAfterHand?.()}
+                            >
+                                離席
+                            </button>
+                        ) : leaveSlot === "leave-done" ? (
+                            <div className={emptySlotClass}>
+                                —
+                            </div>
+                        ) : isTurnReady ? (
+                            <button
+                                type="button"
+                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${foldBlocked
+                                    ? "bg-sky-300/50 text-white/70"
+                                    : "bg-sky-500/80 hover:bg-sky-500"
+                                    }`}
+                                onClick={() => {
+                                    if (foldBlocked) return
+                                    resetQuickBetScroll()
+                                    onAction({
+                                        player_id: playerId,
+                                        action: "fold",
+                                        amount: undefined,
+                                    })
+                                }}
+                                disabled={!table || !playerId || foldBlocked || forceAllFold}
+                            >
+                                Fold
+                            </button>
+                        ) : showAllFoldToggle ? (
+                            <button
+                                type="button"
+                                className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap w-full text-center h-full min-h-0 flex items-center justify-center ${allFoldEnabled
+                                    ? "bg-sky-300/60 text-white/90 hover:bg-sky-300/70"
+                                    : "bg-sky-300/30 text-white/80 hover:bg-sky-300/40"
+                                    }`}
+                                onClick={() => {
+                                    if (forceAllFold) return
+                                    setAllFoldEnabled((prev) => !prev)
+                                }}
+                                disabled={!table || !playerId || forceAllFold}
+                            >
+                                {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
+                            </button>
+                        ) : (
+                            <div className={emptySlotClass}>
+                                —
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
-            {table?.street === "waiting" && (
-                <p className="text-[10px] text-white/50">
-                    2人以上参加で中央のボタンから開始できます。
-                </p>
-            )}
-        </div>
+            {amountOverlayNode}
+        </>
     )
 }
 

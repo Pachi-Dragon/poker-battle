@@ -1,4 +1,3 @@
-import { getHandLabel } from "@/lib/game/handRank"
 import { TableState } from "@/lib/game/types"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { CardBadge } from "./CardBadge"
@@ -20,7 +19,15 @@ interface BoardPotProps {
 
 /** 現在のストリートのベットを除いたポット（フェーズ開始時点のポット） */
 function potExcludingCurrentStreet(table: TableState): number {
-    const streetTotal = table.seats.reduce((sum, s) => sum + (s.street_commit ?? 0), 0)
+    // Fold済みのコミットは「このストリートがまだ進行中（次のアクション者がいる）」なら
+    // その時点でポットに確定した扱いで表示する（進行中除外から外す）。
+    const streetInProgress = table.current_turn_seat !== null && table.current_turn_seat !== undefined
+    const streetTotal = table.seats.reduce(
+        (sum, s) =>
+            sum +
+            ((streetInProgress && s.is_folded) ? 0 : (s.street_commit ?? 0)),
+        0
+    )
     return Math.max(0, table.pot - streetTotal)
 }
 
@@ -52,7 +59,10 @@ export function BoardPot({
     const boardCardAnimationMs = 420
     const boardCardStaggerMs = 120
     const potAmount = potExcludingCurrentStreet(table)
-    const displayPotAmount = potOverride ?? potAmount
+    const breakdown = table.pot_breakdown_excl_current_street
+    const fallbackAmount = potOverride ?? potAmount
+    const displayPotAmount =
+        breakdown && breakdown.length ? breakdown.join("-") : String(fallbackAmount)
     const hasShowdown = table.action_history.some(
         (action) => action.action?.toLowerCase() === "showdown"
     )
@@ -78,46 +88,6 @@ export function BoardPot({
         [table.board, visibleCount]
     )
     const showStart = table.street === "waiting"
-    const payoutEntries = useMemo(() => {
-        const payouts = table.action_history.filter(
-            (action) => action.action?.toLowerCase() === "payout" && action.actor_id
-        )
-        if (!payouts.length) return []
-        const payoutTotals = new Map<string, number>()
-        payouts.forEach((action) => {
-            const actorId = action.actor_id as string
-            const amount = action.amount ?? 0
-            payoutTotals.set(actorId, (payoutTotals.get(actorId) ?? 0) + amount)
-        })
-        const orderedActorIds: string[] = []
-        payouts.forEach((action) => {
-            const actorId = action.actor_id as string
-            if (!orderedActorIds.includes(actorId)) {
-                orderedActorIds.push(actorId)
-            }
-        })
-        const showHandLabel = !isFoldedEnd
-        return orderedActorIds
-            .map((actorId) => {
-                const seat = table.seats.find((item) => item.player_id === actorId)
-                if (!seat) return null
-                const amount = payoutTotals.get(actorId) ?? 0
-                const label =
-                    showHandLabel &&
-                        seat.hole_cards &&
-                        seat.hole_cards.length >= 2 &&
-                        table.board.length >= 5
-                        ? getHandLabel(seat.hole_cards, table.board)
-                        : null
-                return {
-                    seatIndex: seat.seat_index,
-                    name: seat.name ?? "",
-                    amount,
-                    label,
-                }
-            })
-            .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    }, [table.action_history, table.board, table.seats, isFoldedEnd])
     const prevBoardRef = useRef<(string | undefined)[]>([])
     const prevHandNumberRef = useRef(table.hand_number)
     const [animatedIndices, setAnimatedIndices] = useState<number[]>([])
@@ -170,6 +140,7 @@ export function BoardPot({
 
     return (
         <div className="relative min-w-0 w-full">
+            {/* ボード枠は常に同じ構成（カード＋Pot）で高さを固定 */}
             <div className="rounded-2xl border border-white/20 bg-slate-950 px-4 py-2 text-center text-white flex flex-col items-center justify-center gap-1.5 min-w-0 w-full relative">
                 {blinds != null && (
                     <span className="absolute bottom-1 left-1 text-[9px] uppercase tracking-wider text-white/60">
@@ -198,64 +169,48 @@ export function BoardPot({
                                     }`}
                                 style={
                                     shouldAnimate
-                                        ? {
-                                            ["--board-card-drop-duration" as any]:
+                                        ? ({
+                                            ["--board-card-drop-duration"]:
                                                 `${boardCardAnimationMs}ms`,
-                                            ["--board-card-drop-delay" as any]:
+                                            ["--board-card-drop-delay"]:
                                                 `${animationOrder * boardCardStaggerMs}ms`,
-                                        }
+                                        } as React.CSSProperties)
                                         : undefined
                                 }
                             />
                         )
                     })}
                 </div>
-                {showStart && (
-                    <div className="flex flex-col items-center gap-1.5">
-                        <button
-                            type="button"
-                            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
-                                ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                : "bg-white/10 text-white/40 cursor-not-allowed"
-                                }`}
-                            onClick={onStart}
-                            disabled={!canStart}
-                        >
-                            ここを押すとスタート
-                        </button>
-                        {onSaveStatsChange && (
-                            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
-                                <input
-                                    type="checkbox"
-                                    checked={saveStats}
-                                    onChange={(e) => onSaveStatsChange(e.target.checked)}
-                                    className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
-                                />
-                                収支を保存する
-                            </label>
-                        )}
-                    </div>
-                )}
                 <div className="flex items-baseline justify-center gap-1.5 shrink-0">
                     <span className="text-[10px] uppercase tracking-wider text-white/60">Pot</span>
                     <span className="text-base font-semibold">{displayPotAmount}</span>
                 </div>
             </div>
-            {payoutEntries.length > 0 && (
-                <div className="absolute left-1/2 top-full mt-1 flex -translate-x-1/2 flex-col items-center gap-1 text-xs">
-                    {payoutEntries.map((entry) => (
-                        <div key={entry.seatIndex} className="flex items-center gap-2">
-                            <span className="text-white">{entry.name}</span>
-                            <span className="text-lime-300 font-semibold">
-                                +{entry.amount}
-                            </span>
-                            {entry.label && (
-                                <span className="text-yellow-300">
-                                    ({entry.label})
-                                </span>
-                            )}
-                        </div>
-                    ))}
+            {/* スタート時はボードと同じ枠で上に重ねて表示（枠サイズを変えず固定化） */}
+            {showStart && (
+                <div className="absolute inset-0 rounded-2xl border border-white/20 bg-slate-950 px-4 py-2 flex flex-col items-center justify-center gap-1.5 text-white">
+                    <button
+                        type="button"
+                        className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${canStart
+                            ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
+                            : "bg-white/10 text-white/40 cursor-not-allowed"
+                            }`}
+                        onClick={onStart}
+                        disabled={!canStart}
+                    >
+                        誰かがここを押すとスタート
+                    </button>
+                    {onSaveStatsChange && (
+                        <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-white/80">
+                            <input
+                                type="checkbox"
+                                checked={saveStats}
+                                onChange={(e) => onSaveStatsChange(e.target.checked)}
+                                className="h-3 w-3 rounded border-white/40 bg-slate-900 accent-amber-400"
+                            />
+                            収支を保存する
+                        </label>
+                    )}
                 </div>
             )}
         </div>

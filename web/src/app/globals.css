@@ -7,31 +7,37 @@
 }
 
 .vertical-slider::-webkit-slider-runnable-track {
-  width: 6px;
+  height: 10px;
   background: rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
+  border-radius: 5px;
 }
 
 .vertical-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  /* thumb: rectangle + slightly bigger than track for easier hit */
+  /* NOTE: the input is rotated -90deg in UI.
+     So "height" becomes the visible horizontal length (横長) */
+  width: 16px;
+  height: 32px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.9);
   cursor: pointer;
-  margin-top: 0;
+  /* center thumb on track (track thickness 8px) */
+  margin-top: -11px;
+  /* enlarge hit area without changing visible style much */
+  border: 2px solid transparent;
 }
 
 .vertical-slider::-moz-range-track {
-  width: 6px;
+  height: 10px;
   background: rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
+  border-radius: 5px;
 }
 
 .vertical-slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  width: 16px;
+  height: 32px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.9);
   cursor: pointer;
   border: none;
@@ -57,4 +63,31 @@
   animation: board-card-drop var(--board-card-drop-duration, 420ms) ease-out;
   animation-delay: var(--board-card-drop-delay, 0ms);
   animation-fill-mode: both;
+}
+
+@media (hover: none) and (pointer: coarse) {
+
+  html,
+  body {
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+}
+
+/* PWA 表示時（ホーム画面からアプリとして開いたとき）もドキュメントのスクロールを無効化 */
+@media (display-mode: standalone),
+(display-mode: fullscreen),
+(display-mode: minimal-ui) {
+
+  html,
+  body {
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    touch-action: manipulation;
+  }
 }

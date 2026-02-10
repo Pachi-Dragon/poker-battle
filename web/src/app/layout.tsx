@@ -49,7 +49,11 @@ export default function RootLayout({
                 <meta name="format-detection" content="telephone=no" />
                 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
             </head>
-            <body>{children}</body>
+            <body className="bg-emerald-950">
+                <div className="flex flex-col h-[100dvh] min-h-0 overflow-hidden w-full bg-emerald-950">
+                    {children}
+                </div>
+            </body>
         </html>
     )
 }

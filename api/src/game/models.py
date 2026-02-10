@@ -63,6 +63,9 @@ class TableState(BaseModel):
     dealer_seat: int
     street: Street
     pot: int
+    # Pot breakdown excluding the current street's in-progress contributions.
+    # Format: [main_pot, side_pot_1, side_pot_2, ...]
+    pot_breakdown_excl_current_street: List[int] = Field(default_factory=list)
     current_bet: int
     min_raise: int
     board: List[str] = Field(default_factory=list)

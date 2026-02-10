@@ -11,7 +11,7 @@ export default async function Home() {
     }
 
     return (
-        <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-green-900">
+        <main className="flex flex-1 min-h-0 flex-col items-center justify-center p-24 bg-green-900">
             <h1 className="text-[clamp(0.9rem,5vw,1.5rem)] font-bold text-white mb-8 whitespace-nowrap overflow-hidden text-ellipsis max-w-[100vw]">
                 Dragons Poker Online
             </h1>

@@ -158,7 +158,7 @@ export const getHandLabel = (holeCards: string[], board: string[]) => {
         return `${formatNumber(best.values[0])}のスリーカード`
     }
     if (best.rank === 2) {
-        return `${formatNumber(best.values[0])}のツーペア`
+        return `${formatNumber(best.values[0])}と${formatNumber(best.values[1])}のツーペア`
     }
     if (best.rank === 1) {
         return `${formatNumber(best.values[0])}のワンペア`

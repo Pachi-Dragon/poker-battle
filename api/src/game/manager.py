@@ -11,6 +11,16 @@ from .models import ActionPayload, ActionRecord, ActionType, SeatState, Street, 
 
 POSITIONS_6MAX = ["BTN", "SB", "BB", "UTG", "HJ", "CO"]
 
+# Positions are assigned from BTN clockwise, depending on the number of players
+# participating in the current hand (i.e. excluding `pending_join_seats`).
+POSITIONS_BY_PLAYER_COUNT = {
+    2: ["BTN", "BB"],  # heads-up: BTN posts SB, other posts BB
+    3: ["BTN", "SB", "BB"],
+    4: ["BTN", "SB", "BB", "UTG"],
+    5: ["BTN", "SB", "BB", "UTG", "CO"],
+    6: POSITIONS_6MAX,
+}
+
 RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"]
 SUITS = ["♠", "♥", "♦", "♣"]
 RANK_VALUE = {rank: 14 - index for index, rank in enumerate(RANKS)}
@@ -135,16 +145,33 @@ class GameTable:
         self.save_earnings = False
 
     def _seat_positions(self) -> Dict[int, str]:
-        occupied = self._occupied_seat_indices()
-        if len(occupied) == 2 and self.dealer_seat in occupied:
-            positions = {self.dealer_seat: "BTN"}
-            other_seat = occupied[0] if occupied[1] == self.dealer_seat else occupied[1]
-            positions[other_seat] = "BB"
-            return positions
-        positions = {}
+        # Important: during a hand, seats in `pending_join_seats` must not receive
+        # positions until the next hand.
+        eligible = {
+            seat_index
+            for seat_index in self._occupied_seat_indices()
+            if seat_index not in self.pending_join_seats
+        }
+        if not eligible:
+            return {}
+
+        dealer_order_in_hand: List[int] = []
         for offset in range(self.max_players):
             seat_index = (self.dealer_seat + offset) % self.max_players
-            positions[seat_index] = POSITIONS_6MAX[offset]
+            if seat_index in eligible:
+                dealer_order_in_hand.append(seat_index)
+
+        count = len(dealer_order_in_hand)
+        position_names = POSITIONS_BY_PLAYER_COUNT.get(count)
+        if position_names is None:
+            # Fallback for unexpected sizes (e.g. 1 or >6). We still keep BTN as axis.
+            position_names = (["BTN"] + POSITIONS_6MAX[1:])[:count]
+
+        positions: Dict[int, str] = {}
+        for idx, seat_index in enumerate(dealer_order_in_hand):
+            if idx >= len(position_names):
+                break
+            positions[seat_index] = position_names[idx]
         return positions
 
     def _occupied_seat_indices(self) -> List[int]:
@@ -189,6 +216,7 @@ class GameTable:
             seat_index = (start_index + offset) % self.max_players
             if (
                 self.seats[seat_index].player_id
+                and seat_index not in self.pending_join_seats
                 and seat_index not in self.folded_seats
                 and not self._is_all_in_like(seat_index)
             ):
@@ -388,6 +416,85 @@ class GameTable:
             order.append(seat_index)
         return order
 
+    def _build_pot_amounts(self, contribs: Dict[int, int]) -> List[int]:
+        """
+        Build main/side pot amounts from per-seat total contributions.
+
+        Notes:
+        - Includes folded players' contributions in the pot size.
+        - Returns amounts only (eligibility is handled separately for payout).
+        """
+        # Side pots should only be split when eligibility differs (i.e. all-in / insufficient stack),
+        # not merely because someone folded without matching the current bet.
+        #
+        # We therefore derive "cap levels" only from seats still in the hand, and compute pot segment
+        # sizes by summing contributions from *all* seats into those segments.
+        contributions = {seat_index: amount for seat_index, amount in contribs.items() if amount > 0}
+        if not contributions:
+            return []
+        in_hand = set(self._in_hand_seat_indices())
+        if not in_hand:
+            return []
+        cap_levels = sorted(
+            {
+                contributions.get(seat_index, 0)
+                for seat_index in in_hand
+                if contributions.get(seat_index, 0) > 0
+            }
+        )
+        if not cap_levels:
+            # No "cap" among eligible seats (e.g. only folded chips are in the
+            # already-settled part for UI). In that case there is a single pot.
+            return [sum(contributions.values())]
+        amounts: List[int] = []
+        previous = 0
+        for level in cap_levels:
+            pot_amount = 0
+            for amount in contributions.values():
+                pot_amount += max(0, min(amount, level) - previous)
+            if pot_amount > 0:
+                amounts.append(pot_amount)
+            previous = level
+        # Add any "dead money" above the largest eligible cap (e.g. folded commits
+        # moved into the pot while the street is still in progress). This does not
+        # create a side pot; it's simply added to the highest pot segment.
+        remainder = 0
+        for amount in contributions.values():
+            remainder += max(0, amount - previous)
+        if remainder > 0:
+            if amounts:
+                amounts[-1] += remainder
+            else:
+                amounts.append(remainder)
+        return amounts
+
+    def _contribs_excluding_current_street(self) -> Dict[int, int]:
+        """
+        For UI display: pot totals excluding the current street's in-progress bets.
+
+        During betting streets, `street_contribs` represents the amounts committed
+        in the current street (per seat), and `hand_contribs` is per-hand totals.
+        """
+        if self.street in (Street.preflop, Street.flop, Street.turn, Street.river):
+            street_in_progress = self.current_turn_seat is not None
+            contribs: Dict[int, int] = {}
+            for seat_index in range(self.max_players):
+                total = self.hand_contribs.get(seat_index, 0)
+                # Once a seat folds, its current-street commitment should be considered
+                # "in the pot" for the remainder of the street (i.e. no longer treated as
+                # in-progress on the table UI).
+                treat_folded_commit_as_in_pot = (
+                    street_in_progress and seat_index in self.folded_seats
+                )
+                current_street = (
+                    0
+                    if treat_folded_commit_as_in_pot
+                    else self.street_contribs.get(seat_index, 0)
+                )
+                contribs[seat_index] = max(0, total - current_street)
+            return contribs
+        return dict(self.hand_contribs)
+
     def _build_side_pots(self) -> List[Tuple[int, List[int]]]:
         contributions = {
             seat_index: amount
@@ -396,19 +503,50 @@ class GameTable:
         }
         if not contributions:
             return []
-        sorted_levels = sorted(set(contributions.values()))
-        remaining = set(contributions.keys())
+        in_hand = set(self._in_hand_seat_indices())
+        if not in_hand:
+            return []
+
+        # Cap levels are determined only by still-eligible seats (not folded).
+        cap_levels = sorted(
+            {
+                contributions.get(seat_index, 0)
+                for seat_index in in_hand
+                if contributions.get(seat_index, 0) > 0
+            }
+        )
+        if not cap_levels:
+            # No cap among eligible seats -> single pot, all in-hand seats eligible.
+            return [(sum(contributions.values()), sorted(in_hand))]
+
         pots: List[Tuple[int, List[int]]] = []
         previous = 0
-        in_hand = set(self._in_hand_seat_indices())
-        for level in sorted_levels:
-            if not remaining:
-                break
-            pot_amount = (level - previous) * len(remaining)
-            eligible = [seat for seat in remaining if seat in in_hand]
-            pots.append((pot_amount, eligible))
+        for level in cap_levels:
+            pot_amount = 0
+            for amount in contributions.values():
+                pot_amount += max(0, min(amount, level) - previous)
+
+            eligible = sorted(
+                [
+                    seat_index
+                    for seat_index in in_hand
+                    if contributions.get(seat_index, 0) >= level
+                ]
+            )
+            if pot_amount > 0 and eligible:
+                pots.append((pot_amount, eligible))
             previous = level
-            remaining = {seat for seat in remaining if contributions[seat] > level}
+        # Same as `_build_pot_amounts`: add dead money above max eligible cap to the
+        # last pot (all remaining in-hand seats are eligible for it).
+        remainder = 0
+        for amount in contributions.values():
+            remainder += max(0, amount - previous)
+        if remainder > 0:
+            if pots:
+                last_amount, last_eligible = pots[-1]
+                pots[-1] = (last_amount + remainder, last_eligible)
+            else:
+                pots.append((remainder, sorted(in_hand)))
         return pots
 
     def _settle_pots(self) -> None:
@@ -531,14 +669,6 @@ class GameTable:
             seat.street_commit = 0
             seat.last_action = None
             seat.hole_cards = None
-            self.action_history.append(
-                ActionRecord(
-                    actor_id=player_id,
-                    actor_name=name,
-                    action="reserve",
-                    street=self.street,
-                )
-            )
         if self.street in (Street.preflop, Street.flop, Street.turn, Street.river):
             self.pending_join_seats.add(seat_index)
         return seat
@@ -834,7 +964,6 @@ class GameTable:
                 seat,
                 "raise",
                 self.street_contribs[seat.seat_index],
-                detail="full" if is_full_raise else "short",
             )
         elif action == ActionType.all_in:
             if seat.stack == 0:
@@ -866,7 +995,6 @@ class GameTable:
                 seat,
                 "all-in",
                 all_in_amount,
-                detail="full" if is_full_raise else "short",
             )
         else:
             raise ValueError("Unknown action")
@@ -1038,16 +1166,8 @@ class GameTable:
         )
         seat.street_commit = self.street_contribs[seat_index]
         self.current_bet = max(self.street_contribs.values(), default=0)
-        self.action_history.append(
-            ActionRecord(
-                actor_id=seat.player_id,
-                actor_name=seat.name,
-                action="refund",
-                amount=refund,
-                street=self.street,
-                detail="uncalled",
-            )
-        )
+        # Note: refunding uncalled bet affects stacks/pot, but we don't need to
+        # include a refund record in the action history.
 
     def _advance_turn_or_street(self) -> None:
         if self._hand_over():
@@ -1100,7 +1220,32 @@ class GameTable:
             )  # first to act postflop
 
     def to_state(self, connected_player_ids: Optional[Set[str]] = None) -> TableState:
-        positions = self._seat_positions()
+        """
+        Legacy state builder (no per-viewer sanitization).
+        Prefer `to_state_for(...)` for WebSocket payloads.
+        """
+        # Do not assign/show positions until a hand actually starts.
+        # (i.e. first positions are dealt when the game starts / preflop begins)
+        positions = {} if self.street == Street.waiting else self._seat_positions()
+        sanitized_action_history: List[ActionRecord] = []
+        for action in self.action_history:
+            # Do not return unnecessary system-like records
+            if action.action in ("reserve", "refund"):
+                continue
+            # Do not show raise/all-in metadata like "(full)"
+            detail = action.detail
+            if detail in ("full", "short"):
+                detail = None
+            sanitized_action_history.append(
+                ActionRecord(
+                    actor_id=action.actor_id,
+                    actor_name=action.actor_name,
+                    action=action.action,
+                    amount=action.amount,
+                    street=action.street,
+                    detail=detail,
+                )
+            )
         seats = []
         connected = connected_player_ids or set()
         for seat in self.seats:
@@ -1132,11 +1277,114 @@ class GameTable:
             dealer_seat=self.dealer_seat,
             street=self.street,
             pot=self.pot,
+            pot_breakdown_excl_current_street=self._build_pot_amounts(
+                self._contribs_excluding_current_street()
+            ),
             current_bet=self.current_bet,
             min_raise=self.min_raise,
             board=self._visible_board(),
             seats=seats,
-            action_history=self.action_history,
+            action_history=sanitized_action_history,
+            current_turn_seat=self.current_turn_seat,
+            hand_number=self.hand_number,
+            save_earnings=self.save_earnings,
+        )
+
+    def to_state_for(
+        self,
+        viewer_player_id: Optional[str],
+        connected_player_ids: Optional[Set[str]] = None,
+    ) -> TableState:
+        """
+        Build a per-viewer table state.
+
+        - The viewer always receives their own hole cards.
+        - During showdown/settlement with showdown, all non-folded players' hole cards are visible.
+        - During settlement without showdown, only players who performed `hand_reveal` are visible.
+        - Otherwise, other players' hole cards are masked as ["", ""] so the UI can render card backs.
+        """
+        positions = {} if self.street == Street.waiting else self._seat_positions()
+
+        sanitized_action_history: List[ActionRecord] = []
+        revealed_ids: Set[str] = set()
+        has_showdown = False
+        for action in self.action_history:
+            if action.action in ("reserve", "refund"):
+                continue
+            detail = action.detail
+            if detail in ("full", "short"):
+                detail = None
+            sanitized_action_history.append(
+                ActionRecord(
+                    actor_id=action.actor_id,
+                    actor_name=action.actor_name,
+                    action=action.action,
+                    amount=action.amount,
+                    street=action.street,
+                    detail=detail,
+                )
+            )
+            if action.action == "showdown":
+                has_showdown = True
+            if action.action == "hand_reveal" and action.actor_id:
+                revealed_ids.add(action.actor_id)
+
+        connected = connected_player_ids or set()
+        seats: List[SeatState] = []
+        for seat in self.seats:
+            is_connected = True
+            if seat.player_id and connected_player_ids is not None:
+                is_connected = seat.player_id in connected
+
+            hole_cards_out: Optional[List[str]] = None
+            if seat.hole_cards:
+                # Show actual cards to owner
+                if viewer_player_id and seat.player_id == viewer_player_id:
+                    hole_cards_out = seat.hole_cards
+                # Show actual cards during showdown (only non-folded seats)
+                elif has_showdown and seat.seat_index not in self.folded_seats:
+                    hole_cards_out = seat.hole_cards
+                # Show actual cards if explicitly revealed in uncontested settlement
+                elif self.street == Street.settlement and seat.player_id and seat.player_id in revealed_ids:
+                    hole_cards_out = seat.hole_cards
+                else:
+                    # Mask: keep length=2 so UI can render card backs
+                    hole_cards_out = ["", ""]
+
+            seats.append(
+                SeatState(
+                    seat_index=seat.seat_index,
+                    player_id=seat.player_id,
+                    name=seat.name,
+                    stack=seat.stack,
+                    position=positions.get(seat.seat_index),
+                    last_action=seat.last_action,
+                    hole_cards=hole_cards_out,
+                    is_connected=is_connected,
+                    is_ready=seat.is_ready,
+                    is_folded=seat.seat_index in self.folded_seats,
+                    is_all_in=self._is_all_in_like(seat.seat_index),
+                    street_commit=self.street_contribs.get(seat.seat_index, 0),
+                    raise_blocked=seat.seat_index in self.raise_blocked_seats,
+                )
+            )
+
+        return TableState(
+            table_id=self.table_id,
+            small_blind=self.small_blind,
+            big_blind=self.big_blind,
+            max_players=self.max_players,
+            dealer_seat=self.dealer_seat,
+            street=self.street,
+            pot=self.pot,
+            pot_breakdown_excl_current_street=self._build_pot_amounts(
+                self._contribs_excluding_current_street()
+            ),
+            current_bet=self.current_bet,
+            min_raise=self.min_raise,
+            board=self._visible_board(),
+            seats=seats,
+            action_history=sanitized_action_history,
             current_turn_seat=self.current_turn_seat,
             hand_number=self.hand_number,
             save_earnings=self.save_earnings,

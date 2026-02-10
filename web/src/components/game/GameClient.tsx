@@ -1,5 +1,9 @@
 "use client"
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
+import { fetchEarningsSummary } from "@/lib/game/earnings"
+import { getHandLabel } from "@/lib/game/handRank"
 import {
     ActionPayload,
     ActionRecord,
@@ -9,15 +13,13 @@ import {
     ReserveSeatPayload,
     TableState,
 } from "@/lib/game/types"
-import { fetchEarningsSummary } from "@/lib/game/earnings"
 import { useRouter } from "next/navigation"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ActionControls } from "./ActionControls"
 import { ActionHistory } from "./ActionHistory"
 import { BoardPot } from "./BoardPot"
 import { EarningsModal } from "./EarningsModal"
 import { SeatCard } from "./SeatCard"
-import { getHandLabel } from "@/lib/game/handRank"
 
 interface GameClientProps {
     player: JoinTablePayload
@@ -40,21 +42,15 @@ export function GameClient({
     const pendingStateRef = useRef<TableState | null>(null)
     const pendingNextHandRef = useRef<TableState | null>(null)
     /** 5秒ゲージ中に表示する状態（settlement）。ゲージ中は次ハンドの内容を出さない */
-    const displayStateDuringGaugeRef = useRef<TableState | null>(null)
+    const [displayStateDuringGauge, setDisplayStateDuringGauge] =
+        useState<TableState | null>(null)
     const isAnimatingRef = useRef(false)
     const lastAppliedHandRef = useRef<number | null>(null)
     const wasSeatedRef = useRef(false)
-    const lastPotForHandRef = useRef<{ hand: number | null; pot: number }>({
-        hand: null,
-        pot: 0,
-    })
-    const lastFoldStreetRef = useRef<{
-        hand: number | null
-        street: TableState["street"] | null
-    }>({ hand: null, street: null })
     const streetTransitionDelayMs = 650
     const nextHandDelayMs = 5000
-    const revealToGaugeDelayMs = 1000
+    const revealToGaugeDelayMs = 1500
+    const revealHandDelayMs = 1200
     const actionControlsDelayMs = 400
     const heartbeatIntervalMs = 25000
     const socketRef = useRef<WebSocket | null>(null)
@@ -89,8 +85,13 @@ export function GameClient({
     const [isNextHandDelayActive, setIsNextHandDelayActive] = useState(false)
     const [isNextHandDelayPending, setIsNextHandDelayPending] = useState(false)
     const [isNextHandAwaiting, setIsNextHandAwaiting] = useState(false)
+    /** 離席予約時に、ゲージ表示だけ0に固定する（内部タイマーには触れない） */
+    const [forceNextHandGaugeZero, setForceNextHandGaugeZero] = useState(false)
     const isNextHandDelayActiveRef = useRef(false)
     const [isMenuOpen, setIsMenuOpen] = useState(false)
+    const [showMenuRandom, setShowMenuRandom] = useState(false)
+    const [menuRandomValue, setMenuRandomValue] = useState<number | null>(null)
+    const wasHeroTurnRef = useRef(false)
     const [isWaitPaused, setIsWaitPaused] = useState(false)
     const isWaitPausedRef = useRef(false)
     const [actionControlsEnabled, setActionControlsEnabled] = useState(true)
@@ -99,19 +100,23 @@ export function GameClient({
     const [revealOpponents, setRevealOpponents] = useState(false)
     const [revealByUser, setRevealByUser] = useState(false)
     const revealCompletedAtRef = useRef<number | null>(null)
+    const revealOpponentsTimeoutRef = useRef<number | null>(null)
     const nextHandStartTimeoutRef = useRef<number | null>(null)
     const gaugeScheduledHandRef = useRef<number | null>(null)
     const frozenBlindsRef = useRef<{ sb: number; bb: number } | null>(null)
-    const lastProcessedActionIndexRef = useRef(0)
-    const foldOverrideTimeoutsRef = useRef<Map<number, number>>(new Map())
+    const [frozenBlinds, setFrozenBlinds] = useState<{ sb: number; bb: number } | null>(
+        null
+    )
     const prevStreetRef = useRef<TableState["street"] | null>(null)
     const prevHandNumberRef = useRef<number | null>(null)
     const heartbeatTimeoutRef = useRef<number | null>(null)
     const actionControlsDelayTimeoutRef = useRef<number | null>(null)
-    const [seatActionOverrides, setSeatActionOverrides] = useState<
-        Record<number, { mode: "chips" | "hide"; amount?: number }>
-    >({})
     const [saveStats, setSaveStats] = useState(false)
+    /** settlement + hasShowdown 時の表示フェーズ: hands = ハンド公開のみ, win = 勝者・ゲージ・ボタン表示 */
+    const [settlementDisplayPhase, setSettlementDisplayPhase] = useState<
+        "hands" | "win" | null
+    >(null)
+    const settlementPhaseTimeoutRef = useRef<number | null>(null)
 
     const scheduleHeartbeat = () => {
         if (heartbeatTimeoutRef.current) {
@@ -279,16 +284,19 @@ export function GameClient({
             window.clearTimeout(nextHandStartTimeoutRef.current)
             nextHandStartTimeoutRef.current = null
         }
-        displayStateDuringGaugeRef.current = null
+        setDisplayStateDuringGauge(null)
         isNextHandDelayActiveRef.current = false
         setIsNextHandDelayActive(false)
         setIsNextHandDelayPending(false)
         setIsNextHandAwaiting(false)
         setNextHandDelayMsLeft(0)
         nextHandDelayMsLeftRef.current = 0
+        setForceNextHandGaugeZero(false)
         nextHandDelayLastTickRef.current = null
         setIsWaitPaused(false)
         isWaitPausedRef.current = false
+        frozenBlindsRef.current = null
+        setFrozenBlinds(null)
     }
 
     const sendNextHandGaugeComplete = () => {
@@ -320,10 +328,12 @@ export function GameClient({
         options?: { onGaugeComplete?: () => void }
     ) => {
         if (!frozenBlindsRef.current && tableStateRef.current) {
-            frozenBlindsRef.current = {
+            const next = {
                 sb: tableStateRef.current.small_blind,
                 bb: tableStateRef.current.big_blind,
             }
+            frozenBlindsRef.current = next
+            setFrozenBlinds(next)
         }
         if (delayMs <= 0) {
             if (options?.onGaugeComplete) {
@@ -366,8 +376,9 @@ export function GameClient({
                 }
                 isNextHandDelayActiveRef.current = false
                 setIsNextHandDelayActive(false)
-                displayStateDuringGaugeRef.current = null
+                setDisplayStateDuringGauge(null)
                 frozenBlindsRef.current = null
+                setFrozenBlinds(null)
                 if (options?.onGaugeComplete) {
                     setIsNextHandAwaiting(true)
                     options.onGaugeComplete()
@@ -391,10 +402,12 @@ export function GameClient({
         options?: { onGaugeComplete?: () => void }
     ) => {
         if (!frozenBlindsRef.current && tableStateRef.current) {
-            frozenBlindsRef.current = {
+            const next = {
                 sb: tableStateRef.current.small_blind,
                 bb: tableStateRef.current.big_blind,
             }
+            frozenBlindsRef.current = next
+            setFrozenBlinds(next)
         }
         if (nextHandStartTimeoutRef.current) {
             window.clearTimeout(nextHandStartTimeoutRef.current)
@@ -429,6 +442,17 @@ export function GameClient({
     useEffect(() => {
         window.localStorage.setItem("pokerTimeLimitEnabled", timeLimitEnabled ? "1" : "0")
     }, [timeLimitEnabled])
+
+    useEffect(() => {
+        const stored = window.localStorage.getItem("pokerShowMenuRandom")
+        if (stored !== null) {
+            setShowMenuRandom(stored === "1")
+        }
+    }, [])
+
+    useEffect(() => {
+        window.localStorage.setItem("pokerShowMenuRandom", showMenuRandom ? "1" : "0")
+    }, [showMenuRandom])
 
     useEffect(() => {
         const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
@@ -483,7 +507,7 @@ export function GameClient({
                     )
                     if (hasRevealUpdate) {
                         const display = buildDisplayState(nextState, tableStateRef.current)
-                        displayStateDuringGaugeRef.current = display
+                        setDisplayStateDuringGauge(display)
                         setTableState(display)
                         return
                     }
@@ -528,6 +552,15 @@ export function GameClient({
                 const shouldDelayStreetChange =
                     prevState.street !== sanitizedNextState.street
                 if (shouldDelayStreetChange) {
+                    // When the server resets to `waiting` (e.g. players left and only 1 remains),
+                    // apply immediately. Delaying while mixing prev-board with cleared history can
+                    // briefly show a full runout / incorrect pot.
+                    if (sanitizedNextState.street === "waiting") {
+                        clearActionControlsDelay()
+                        setActionControlsEnabled(true)
+                        setTableState(buildDisplayState(sanitizedNextState, prevState))
+                        return
+                    }
                     isAnimatingRef.current = true
                     pendingStateRef.current = sanitizedNextState
                     if (["flop", "turn", "river"].includes(sanitizedNextState.street)) {
@@ -580,36 +613,6 @@ export function GameClient({
     }, [tableState])
 
     useEffect(() => {
-        if (!tableState) return
-        const handNumber = tableState.hand_number ?? null
-        if (handNumber === null) return
-        const potAmount = potExcludingCurrentStreet(tableState)
-        const previous = lastPotForHandRef.current
-        if (previous.hand !== handNumber) {
-            lastPotForHandRef.current = { hand: handNumber, pot: potAmount }
-            return
-        }
-        if (potAmount > 0) {
-            lastPotForHandRef.current.pot = potAmount
-        }
-    }, [tableState?.hand_number, tableState?.pot, tableState?.seats])
-
-    useEffect(() => {
-        if (!tableState) return
-        const handNumber = tableState.hand_number ?? null
-        if (handNumber === null) return
-        if (lastFoldStreetRef.current.hand !== handNumber) {
-            lastFoldStreetRef.current = { hand: handNumber, street: null }
-        }
-        const lastFold = [...tableState.action_history]
-            .reverse()
-            .find((action) => action.action?.toLowerCase() === "fold")
-        if (lastFold?.street) {
-            lastFoldStreetRef.current = { hand: handNumber, street: lastFold.street }
-        }
-    }, [tableState?.hand_number, tableState?.action_history])
-
-    useEffect(() => {
         if (tableState?.hand_number === undefined) return
         if (lastAppliedHandRef.current === null) {
             lastAppliedHandRef.current = tableState.hand_number
@@ -617,10 +620,16 @@ export function GameClient({
         }
         if (lastAppliedHandRef.current === tableState.hand_number) return
         lastAppliedHandRef.current = tableState.hand_number
+        setForceNextHandGaugeZero(false)
         gaugeScheduledHandRef.current = null
         clearNextHandDelayTimers()
         setIsNextHandAwaiting(false)
         setRevealByUser(false)
+        setSettlementDisplayPhase(null)
+        if (settlementPhaseTimeoutRef.current) {
+            window.clearTimeout(settlementPhaseTimeoutRef.current)
+            settlementPhaseTimeoutRef.current = null
+        }
         if (pendingTimeLimitEnabled !== null) {
             setTimeLimitEnabled(pendingTimeLimitEnabled)
             setForceAllFold(false)
@@ -639,6 +648,11 @@ export function GameClient({
         }
         if (!["settlement", "showdown"].includes(tableState.street)) {
             setIsNextHandAwaiting(false)
+            setSettlementDisplayPhase(null)
+            if (settlementPhaseTimeoutRef.current) {
+                window.clearTimeout(settlementPhaseTimeoutRef.current)
+                settlementPhaseTimeoutRef.current = null
+            }
         }
     }, [tableState?.street, tableState?.hand_number])
 
@@ -659,11 +673,12 @@ export function GameClient({
                 window.clearTimeout(transitionTimeoutRef.current)
             }
             clearNextHandDelayTimers()
-            foldOverrideTimeoutsRef.current.forEach((timeout) =>
-                window.clearTimeout(timeout)
-            )
-            foldOverrideTimeoutsRef.current.clear()
+            if (settlementPhaseTimeoutRef.current) {
+                window.clearTimeout(settlementPhaseTimeoutRef.current)
+                settlementPhaseTimeoutRef.current = null
+            }
             frozenBlindsRef.current = null
+            setFrozenBlinds(null)
             revealCompletedAtRef.current = null
             clearActionControlsDelay()
         }
@@ -694,27 +709,57 @@ export function GameClient({
             ),
         [tableState?.action_history]
     )
-    const hasHandReveal = useMemo(
-        () =>
-            Boolean(
-                tableState?.action_history?.some(
-                    (action) => action.action?.toLowerCase() === "hand_reveal"
-                )
-            ),
-        [tableState?.action_history]
-    )
-    const hasHandRevealFromOther = useMemo(
-        () =>
-            Boolean(
-                tableState?.action_history?.some(
-                    (action) =>
-                        action.action?.toLowerCase() === "hand_reveal" &&
-                        action.actor_id &&
-                        action.actor_id !== player.player_id
-                )
-            ),
-        [tableState?.action_history, player.player_id]
-    )
+    const revealedHandPlayerIds = useMemo(() => {
+        const ids = new Set<string>()
+        tableState?.action_history?.forEach((action) => {
+            if ((action.action ?? "").toLowerCase() !== "hand_reveal") return
+            if (!action.actor_id) return
+            ids.add(action.actor_id)
+        })
+        return ids
+    }, [tableState?.action_history])
+
+    useEffect(() => {
+        if (
+            !tableState ||
+            tableState.street !== "settlement" ||
+            !hasShowdown ||
+            settlementDisplayPhase !== null
+        ) {
+            return
+        }
+        setSettlementDisplayPhase("hands")
+        if (settlementPhaseTimeoutRef.current) {
+            window.clearTimeout(settlementPhaseTimeoutRef.current)
+        }
+        settlementPhaseTimeoutRef.current = window.setTimeout(() => {
+            settlementPhaseTimeoutRef.current = null
+            setSettlementDisplayPhase("win")
+            const state = tableStateRef.current
+            if (
+                state &&
+                state.street === "settlement" &&
+                !isNextHandDelayActiveRef.current &&
+                !nextHandStartTimeoutRef.current
+            ) {
+                if (gaugeScheduledHandRef.current !== state.hand_number) {
+                    gaugeScheduledHandRef.current = state.hand_number
+                    scheduleNextHandDelay(state, revealToGaugeDelayMs, {
+                        onGaugeComplete: sendNextHandGaugeComplete,
+                    })
+                }
+            }
+        }, revealHandDelayMs)
+        return
+    }, [
+        tableState?.street,
+        tableState?.hand_number,
+        hasShowdown,
+        settlementDisplayPhase,
+        revealHandDelayMs,
+        revealToGaugeDelayMs,
+    ])
+
     const isWaitingPlayer = Boolean(tableState && !heroSeat)
     const isHeroTurn = Boolean(
         tableState &&
@@ -753,7 +798,11 @@ export function GameClient({
         }
     }, [tableState, heroSeat, embeddedInHome, onBackToHome, router])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
+        if (revealOpponentsTimeoutRef.current) {
+            window.clearTimeout(revealOpponentsTimeoutRef.current)
+            revealOpponentsTimeoutRef.current = null
+        }
         if (
             tableState?.hand_number !== undefined &&
             tableState?.hand_number !== tableStateRef.current?.hand_number
@@ -765,8 +814,12 @@ export function GameClient({
             return
         }
         if (tableState.street === "showdown") {
-            setRevealOpponents(true)
+            setRevealOpponents(false)
             revealCompletedAtRef.current = Date.now()
+            revealOpponentsTimeoutRef.current = window.setTimeout(() => {
+                revealOpponentsTimeoutRef.current = null
+                setRevealOpponents(true)
+            }, revealHandDelayMs)
             if (
                 pendingNextHandRef.current &&
                 !isNextHandDelayActiveRef.current &&
@@ -781,30 +834,19 @@ export function GameClient({
         }
         if (tableState.street === "settlement") {
             if (hasShowdown) {
-                setRevealOpponents(true)
-                revealCompletedAtRef.current = Date.now()
-                if (
-                    !isNextHandDelayActiveRef.current &&
-                    !nextHandStartTimeoutRef.current
-                ) {
-                    if (gaugeScheduledHandRef.current !== tableState.hand_number) {
-                        gaugeScheduledHandRef.current = tableState.hand_number
-                        if (pendingNextHandRef.current) {
-                            scheduleNextHandDelay(
-                                pendingNextHandRef.current,
-                                revealToGaugeDelayMs
-                            )
-                        } else {
-                            scheduleNextHandDelay(tableState, revealToGaugeDelayMs, {
-                                onGaugeComplete: sendNextHandGaugeComplete,
-                            })
-                        }
-                    }
+                if (settlementDisplayPhase === "hands") {
+                    setRevealOpponents(false)
+                    revealCompletedAtRef.current = Date.now()
+                    revealOpponentsTimeoutRef.current = window.setTimeout(() => {
+                        revealOpponentsTimeoutRef.current = null
+                        setRevealOpponents(true)
+                    }, 100)
                 }
                 return
             }
             revealCompletedAtRef.current = Date.now()
-            setRevealOpponents((prev) => prev || hasHandRevealFromOther)
+            // hand_reveal は「公開した席だけ」を表にする（showHoleCards 側で制御）
+            setRevealOpponents(false)
             if (
                 !isNextHandDelayActiveRef.current &&
                 !nextHandStartTimeoutRef.current
@@ -830,9 +872,9 @@ export function GameClient({
         tableState?.hand_number,
         tableState?.street,
         hasShowdown,
-        hasHandReveal,
-        hasHandRevealFromOther,
         revealByUser,
+        revealHandDelayMs,
+        settlementDisplayPhase,
     ])
 
     useEffect(() => {
@@ -842,59 +884,12 @@ export function GameClient({
         const currentHand = tableState.hand_number
         const prevHand = prevHandNumberRef.current
         if ((prevStreet && currentStreet !== prevStreet) || (prevHand && currentHand !== prevHand)) {
-            foldOverrideTimeoutsRef.current.forEach((timeout) =>
-                window.clearTimeout(timeout)
-            )
-            foldOverrideTimeoutsRef.current.clear()
-            setSeatActionOverrides({})
-            lastProcessedActionIndexRef.current =
-                tableState.action_history?.length ?? 0
             clearActionControlsDelay()
             setActionControlsEnabled(true)
         }
         prevStreetRef.current = currentStreet
         prevHandNumberRef.current = currentHand
     }, [tableState?.street, tableState?.hand_number])
-
-    useEffect(() => {
-        if (!tableState) return
-        const actions = tableState.action_history ?? []
-        if (actions.length < lastProcessedActionIndexRef.current) {
-            lastProcessedActionIndexRef.current = 0
-        }
-        const newActions = actions.slice(lastProcessedActionIndexRef.current)
-        lastProcessedActionIndexRef.current = actions.length
-        newActions.forEach((action) => {
-            if (action.action?.toLowerCase() !== "fold") return
-            if (!action.actor_id) return
-            if (tableState.street === "settlement" && !hasShowdown) return
-            if (!["preflop", "flop", "turn", "river"].includes(action.street)) return
-            const seat = tableState.seats.find(
-                (item) => item.player_id === action.actor_id
-            )
-            if (!seat) return
-            const seatIndex = seat.seat_index
-            const existing = foldOverrideTimeoutsRef.current.get(seatIndex)
-            if (existing) {
-                window.clearTimeout(existing)
-            }
-            const timeout = window.setTimeout(() => {
-                setSeatActionOverrides((prev) => {
-                    const next = { ...prev }
-                    if ((seat.street_commit ?? 0) > 0) {
-                        next[seatIndex] = {
-                            mode: "chips",
-                            amount: seat.street_commit ?? 0,
-                        }
-                    } else {
-                        next[seatIndex] = { mode: "hide" }
-                    }
-                    return next
-                })
-            }, revealToGaugeDelayMs)
-            foldOverrideTimeoutsRef.current.set(seatIndex, timeout)
-        })
-    }, [tableState?.action_history, tableState?.street, tableState?.seats, hasShowdown])
 
     useEffect(() => {
         if (timerRef.current) {
@@ -984,14 +979,14 @@ export function GameClient({
         })
     }
 
-    // マット中央(50%,50%)を基準に6席を楕円上に配置（全席ボード寄り、横4席は外側）
+    // マット中央を基準に6席を楕円上に配置（ボードから少しだけ離す）
     const seatPositionStyles: Array<{ left: string; top: string }> = [
-        { left: "50%", top: "20%" },   // 上中央
-        { left: "84%", top: "28%" },   // 右上
-        { left: "84%", top: "72%" },   // 右下
-        { left: "50%", top: "80%" },   // 下中央
-        { left: "16%", top: "72%" },   // 左下
-        { left: "16%", top: "28%" },   // 左上
+        { left: "50%", top: "14%" },   // 上中央（ヘッダーに隠れないよう下げる）
+        { left: "85%", top: "20%" },   // 右上（ボードから少し離す）
+        { left: "85%", top: "72%" },   // 右下（下に）
+        { left: "50%", top: "80%" },   // 下中央（下に）
+        { left: "15%", top: "72%" },   // 左下（下に）
+        { left: "15%", top: "20%" },   // 左上（ボードから少し離す）
     ]
 
     const getSeatPositionStyle = (seatIndex: number) => {
@@ -1005,65 +1000,224 @@ export function GameClient({
         : 0
     const timeLeftSeconds = Math.max(0, Math.ceil(timeLeftMs / 1000))
     const showActionTimer = Boolean(timeLimitEnabled && isHeroTurnReady)
-    const showNextHandGauge = isNextHandDelayActive || isNextHandDelayPending
+    const inSettlementWithShowdown =
+        tableState?.street === "settlement" && hasShowdown
+    const showNextHandGauge =
+        isNextHandDelayActive ||
+        isNextHandDelayPending ||
+        (inSettlementWithShowdown && settlementDisplayPhase === "win")
     const showBetweenHandsControls = showNextHandGauge || isNextHandAwaiting
     const showStopNext = showNextHandGauge
+    const leaveSlot =
+        !showBetweenHandsControls ? "normal" : leaveAfterHand ? "leave-done" : "leave"
+    const callSlot =
+        tableState?.street !== "settlement" || hasShowdown
+            ? "normal"
+            : revealByUser
+                ? "reveal-done"
+                : heroSeat?.hole_cards && heroSeat.hole_cards.length >= 2
+                    ? "reveal"
+                    : "normal"
+    const raiseSlot = showStopNext ? "stop-next" : "normal"
+    const displayTableState =
+        isNextHandDelayActive && displayStateDuringGauge
+            ? displayStateDuringGauge
+            : tableState
+    const turnHighlightEnabled = Boolean(
+        displayTableState &&
+        ["preflop", "flop", "turn", "river"].includes(displayTableState.street) &&
+        actionControlsEnabled
+    )
+    const inShowdownStreet = Boolean(
+        displayTableState &&
+        ["showdown", "settlement"].includes(displayTableState.street)
+    )
+    const hasPayoutInHistory = Boolean(
+        displayTableState?.action_history?.some(
+            (a) => a.action?.toLowerCase() === "payout"
+        )
+    )
+    const isTransitionShowingPreSettlement =
+        Boolean(displayTableState) &&
+        !["showdown", "settlement"].includes(displayTableState!.street) &&
+        hasPayoutInHistory
+    const suppressShowdownDetails =
+        isTransitionShowingPreSettlement ||
+        (inShowdownStreet &&
+            (settlementDisplayPhase === "hands" ||
+                (!showNextHandGauge && !isNextHandAwaiting)))
+    const effectiveNextHandDelayMsLeft = forceNextHandGaugeZero ? 0 : nextHandDelayMsLeft
     const nextHandDelayPercent = Math.max(
         0,
-        Math.min(100, (nextHandDelayMsLeft / nextHandDelayMs) * 100)
+        Math.min(100, (effectiveNextHandDelayMsLeft / nextHandDelayMs) * 100)
     )
-    const nextHandDelaySeconds = Math.max(0, Math.ceil(nextHandDelayMsLeft / 1000))
+    const nextHandDelaySeconds = Math.max(
+        0,
+        Math.ceil(effectiveNextHandDelayMsLeft / 1000)
+    )
     const displayBlinds =
-        (showNextHandGauge || nextHandStartTimeoutRef.current) &&
-            frozenBlindsRef.current
-            ? frozenBlindsRef.current
+        (showNextHandGauge || isNextHandDelayPending) && frozenBlinds
+            ? frozenBlinds
             : tableState
                 ? { sb: tableState.small_blind, bb: tableState.big_blind }
                 : null
-    const displayTableState =
-        isNextHandDelayActive && displayStateDuringGaugeRef.current
-            ? displayStateDuringGaugeRef.current
-            : tableState
-    const winnerIds = useMemo(() => {
-        if (!displayTableState) return new Set<string>()
-        if (!["showdown", "settlement"].includes(displayTableState.street)) {
-            return new Set<string>()
-        }
-        const payouts = displayTableState.action_history?.filter(
-            (action) => action.action?.toLowerCase() === "payout" && action.actor_id
+    const showHandResultOverlays = useMemo(() => {
+        if (!displayTableState) return false
+        if (suppressShowdownDetails) return false
+        if (!["showdown", "settlement"].includes(displayTableState.street)) return false
+        return Boolean(
+            displayTableState.action_history?.some(
+                (a) => a.action?.toLowerCase() === "payout"
+            )
         )
-        return new Set<string>(payouts?.map((action) => action.actor_id as string))
-    }, [displayTableState])
-    const winnerHandLabels = useMemo(() => {
-        const labels = new Map<number, string>()
-        if (!displayTableState) return labels
-        if (!["showdown", "settlement"].includes(displayTableState.street)) {
-            return labels
+    }, [displayTableState, suppressShowdownDetails])
+
+    const payoutTotalsByPlayerId = useMemo(() => {
+        const totals = new Map<string, number>()
+        if (!displayTableState) return totals
+        if (!showHandResultOverlays) return totals
+        displayTableState.action_history?.forEach((action) => {
+            const act = (action.action ?? "").toLowerCase()
+            if (act !== "payout") return
+            if (!action.actor_id) return
+            const amount = action.amount ?? 0
+            totals.set(action.actor_id, (totals.get(action.actor_id) ?? 0) + amount)
+        })
+        return totals
+    }, [displayTableState, showHandResultOverlays])
+
+    const potWinnerPlayerIds = useMemo(() => {
+        const ids = new Set<string>()
+        if (!displayTableState) return ids
+        // 表示開始は「5秒ゲージ出現時」
+        if (!showNextHandGauge) return ids
+        displayTableState.action_history?.forEach((action) => {
+            const act = (action.action ?? "").toLowerCase()
+            if (act !== "payout") return
+            if (!action.actor_id) return
+            const amount = action.amount ?? 0
+            if (amount <= 0) return
+            ids.add(action.actor_id)
+        })
+        return ids
+    }, [displayTableState, showNextHandGauge])
+
+    const handContribTotalsByPlayerId = useMemo(() => {
+        const totals = new Map<string, number>()
+        if (!displayTableState) return totals
+        if (!showHandResultOverlays) return totals
+        // server-side hand_contribs を action_history から復元する（表示用）
+        const streetCommit = new Map<string, number>() // per-street total commit
+        const seatedPlayerIds = displayTableState.seats
+            .map((s) => s.player_id)
+            .filter((id): id is string => Boolean(id))
+
+        // server の _refund_uncalled_bet を UI 用に再現（action_history には記録されない）
+        const applyRefundUncalledBet = () => {
+            if (!seatedPlayerIds.length) return
+            const amounts = seatedPlayerIds.map((pid) => streetCommit.get(pid) ?? 0)
+            const maxAmount = Math.max(0, ...amounts)
+            if (maxAmount <= 0) return
+            const maxPlayers = seatedPlayerIds.filter(
+                (pid) => (streetCommit.get(pid) ?? 0) === maxAmount
+            )
+            if (maxPlayers.length !== 1) return
+            const secondMax = Math.max(
+                0,
+                ...amounts.filter((v) => v !== maxAmount)
+            )
+            const refund = maxAmount - secondMax
+            if (refund <= 0) return
+            const pid = maxPlayers[0]
+            totals.set(pid, Math.max(0, (totals.get(pid) ?? 0) - refund))
+            streetCommit.set(pid, Math.max(0, (streetCommit.get(pid) ?? 0) - refund))
         }
-        if (displayTableState.board.length < 5) return labels
+
+        const actions = displayTableState.action_history ?? []
+        actions.forEach((record) => {
+            const raw = (record.action ?? "").toLowerCase()
+            const act = raw.replace(/_/g, "-")
+            // Refund occurs when a street ends / hand ends, before payouts.
+            if (act.startsWith("street-")) {
+                applyRefundUncalledBet()
+                streetCommit.clear()
+                return
+            }
+            if (act === "hand-end" || act === "showdown") {
+                applyRefundUncalledBet()
+                return
+            }
+            if (act === "payout") {
+                applyRefundUncalledBet()
+                return
+            }
+            if (act === "hand-start" || act === "auto-topup") return
+
+            if (!record.actor_id) return
+            const actorId = record.actor_id
+            const amount = record.amount ?? 0
+            if (amount <= 0) return
+            // No money moved
+            if (act === "fold" || act === "check") return
+
+            const add = (delta: number) => {
+                if (delta <= 0) return
+                totals.set(actorId, (totals.get(actorId) ?? 0) + delta)
+            }
+
+            if (act === "post-sb" || act === "post-bb" || act === "bet") {
+                add(amount)
+                streetCommit.set(actorId, (streetCommit.get(actorId) ?? 0) + amount)
+                return
+            }
+            if (act === "call" || act === "raise" || act === "all-in") {
+                const prev = streetCommit.get(actorId) ?? 0
+                const next = amount
+                const delta = Math.max(0, next - prev)
+                add(delta)
+                streetCommit.set(actorId, next)
+                return
+            }
+            // Unknown actions are ignored (safe default for display)
+        })
+        // Safety: if no marker existed (rare), still apply once.
+        applyRefundUncalledBet()
+        return totals
+    }, [displayTableState, showHandResultOverlays])
+
+    const seatResultsByIndex = useMemo(() => {
+        const results = new Map<number, { delta: number; label?: string | null }>()
+        if (!displayTableState) return results
+        if (!showHandResultOverlays) return results
+        const canShowLabel = Boolean(hasShowdown && displayTableState.board.length >= 5)
         displayTableState.seats.forEach((seat) => {
             if (!seat.player_id) return
-            if (!winnerIds.has(seat.player_id)) return
+            // ハンドがない席（未配布/参加してない）は何も表示しない
             if (!seat.hole_cards || seat.hole_cards.length < 2) return
-            const label = getHandLabel(seat.hole_cards, displayTableState.board)
-            if (label) {
-                labels.set(seat.seat_index, label)
-            }
+            const payout = payoutTotalsByPlayerId.get(seat.player_id) ?? 0
+            const contrib = handContribTotalsByPlayerId.get(seat.player_id) ?? 0
+            const delta = payout - contrib
+            const label =
+                canShowLabel && !seat.is_folded
+                    ? getHandLabel(seat.hole_cards, displayTableState.board)
+                    : null
+            results.set(seat.seat_index, { delta, label })
         })
-        return labels
-    }, [displayTableState, winnerIds])
+        return results
+    }, [
+        displayTableState,
+        showHandResultOverlays,
+        hasShowdown,
+        payoutTotalsByPlayerId,
+        handContribTotalsByPlayerId,
+    ])
     const isFoldedSettlement =
         displayTableState?.street === "settlement" && !hasShowdown
-    const potOverride =
-        displayTableState &&
-            ["showdown", "settlement"].includes(displayTableState.street) &&
-            lastPotForHandRef.current.hand === displayTableState.hand_number
-            ? lastPotForHandRef.current.pot
-            : undefined
     const foldVisibleStreet =
-        isFoldedSettlement &&
-            lastFoldStreetRef.current.hand === displayTableState?.hand_number
-            ? lastFoldStreetRef.current.street
+        isFoldedSettlement && displayTableState
+            ? [...displayTableState.action_history]
+                .reverse()
+                .find((action) => action.action?.toLowerCase() === "fold")?.street ?? null
             : null
     const hideActionAmounts =
         false
@@ -1074,16 +1228,35 @@ export function GameClient({
     const canLeaveImmediately = Boolean(heroSeat && tableState?.street === "waiting")
     const leaveButtonLabel = leaveAfterHand ? "離席（次ハンド）" : "離席"
 
+    const nextMenuRandom = () => Math.floor(Math.random() * 100) + 1
+
+    useEffect(() => {
+        // オンにした直後は即表示できるように初期値を入れる
+        if (showMenuRandom && menuRandomValue === null) {
+            setMenuRandomValue(nextMenuRandom())
+        }
+    }, [showMenuRandom, menuRandomValue])
+
+    useEffect(() => {
+        // 自分のアクション番が来た瞬間に乱数を更新
+        const wasHeroTurn = wasHeroTurnRef.current
+        wasHeroTurnRef.current = isHeroTurn
+        if (!showMenuRandom) return
+        if (!wasHeroTurn && isHeroTurn) {
+            setMenuRandomValue(nextMenuRandom())
+        }
+    }, [isHeroTurn, showMenuRandom])
+
     return (
         <div
             className={
                 embeddedInHome
-                    ? "flex flex-1 min-h-0 flex-col text-white"
-                    : "min-h-screen bg-emerald-950 text-white"
+                    ? "flex flex-1 min-h-0 flex-col text-white relative z-0"
+                    : "min-h-[100dvh] bg-emerald-950 text-white relative z-0"
             }
         >
-            <header className="flex flex-col gap-1 px-4 pb-3 pt-0 shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
+            <header className="flex flex-col gap-0 px-4 py-1 shrink-0 relative z-0">
+                <div className="relative z-30 flex items-center gap-2 min-w-0">
                     <button
                         type="button"
                         className="rounded bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/20 shrink-0"
@@ -1092,14 +1265,19 @@ export function GameClient({
                     >
                         メニュー
                     </button>
+                    {showMenuRandom && isHeroTurn && (
+                        <div className="text-xs font-semibold tabular-nums text-white/80 rounded bg-white/10 px-2 py-1.5 shrink-0">
+                            {menuRandomValue ?? "—"}
+                        </div>
+                    )}
                 </div>
             </header>
 
             <main
                 className={
                     embeddedInHome
-                        ? "flex flex-1 min-h-0 flex-col px-4 pb-4 overflow-auto"
-                        : "flex min-h-[calc(100vh-64px)] flex-col px-4 pb-4"
+                        ? "flex flex-1 min-h-0 flex-col px-4 pb-4 overflow-hidden sm:overflow-auto relative z-0"
+                        : "flex h-[calc(100dvh-48px)] min-h-0 flex-col px-4 pb-4 overflow-hidden relative z-0"
                 }
             >
                 {isDisconnected && (
@@ -1121,48 +1299,54 @@ export function GameClient({
                         </div>
                     </div>
                 )}
-                <div className="relative mx-auto mt-2 w-full max-w-sm flex-1 sm:max-w-md">
-                    {/* 高さ確保用（マット・席・ボードは absolute でこの上に重なる） */}
-                    <div className="aspect-[4/5] w-full" aria-hidden="true" />
-                    <div className="absolute inset-x-4 inset-y-[3.5rem] rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
+                <div className="relative z-[15] mx-auto pt-2 w-full max-w-sm flex-none sm:max-w-md">
+                    {/* 高さ確保用（マット・席・ボードは absolute でこの上に重なる／縦長スマホでは最大高さで制限） */}
+                    <div className="aspect-[4/5] w-full max-h-[58dvh]" aria-hidden="true" />
+                    <div className="absolute inset-x-4 top-0 bottom-[1.5rem] rounded-[32%] border border-emerald-400/30 bg-emerald-900/50 shadow-[0_0_40px_rgba(16,185,129,0.25)]" />
                     {/* 席はマットと同じコンテナで中央基準に配置 */}
                     <div className="absolute inset-0">
                         {displayTableState?.seats.map((seat) => {
-                            const override = seatActionOverrides[seat.seat_index]
                             const heroIndex = heroSeat?.seat_index ?? 0
                             const posIndex =
                                 (seat.seat_index - heroIndex + 3 + 6) % 6
                             const isTopSeat =
                                 posIndex === 0 || posIndex === 1 || posIndex === 5
                             const pos = getSeatPositionStyle(seat.seat_index)
+                            const isRevealed = Boolean(
+                                seat.player_id && revealedHandPlayerIds.has(seat.player_id)
+                            )
                             return (
                                 <div
                                     key={seat.seat_index}
-                                    className="absolute w-24 sm:w-28 -translate-x-1/2 -translate-y-1/2"
+                                    className="absolute w-28 sm:w-32 -translate-x-1/2 -translate-y-1/2"
                                     style={{ left: pos.left, top: pos.top }}
                                 >
                                     <SeatCard
                                         seat={seat}
                                         isHero={heroSeat?.seat_index === seat.seat_index}
                                         isCurrentTurn={
-                                            displayTableState?.current_turn_seat === seat.seat_index
-                                        }
-                                        isTopSeat={isTopSeat}
-                                        canReserve={isWaitingPlayer && !seat.player_id}
-                                        showWinner={
                                             Boolean(
-                                                seat.player_id && winnerIds.has(seat.player_id)
+                                                turnHighlightEnabled &&
+                                                displayTableState?.current_turn_seat ===
+                                                seat.seat_index
                                             )
                                         }
+                                        isPotWinner={Boolean(
+                                            seat.player_id && potWinnerPlayerIds.has(seat.player_id)
+                                        )}
+                                        isTopSeat={isTopSeat}
+                                        canReserve={isWaitingPlayer && !seat.player_id}
                                         showHoleCards={
                                             heroSeat?.seat_index === seat.seat_index ||
-                                            revealOpponents
+                                            (inShowdownStreet &&
+                                                revealOpponents &&
+                                                !seat.is_folded) ||
+                                            (displayTableState?.street === "settlement" &&
+                                                !hasShowdown &&
+                                                isRevealed)
                                         }
-                                        chipsOnlyBadge={override?.mode === "chips"}
-                                        chipsOnlyAmount={override?.amount}
-                                        hideCommitBadge={
-                                            override?.mode === "hide" || hideActionAmounts
-                                        }
+                                        hideCommitBadge={hideActionAmounts}
+                                        result={seatResultsByIndex.get(seat.seat_index) ?? null}
                                         onReserve={() => handleReserveSeat(seat.seat_index)}
                                         onSelect={() => openEarningsForSeat(seat)}
                                     />
@@ -1174,8 +1358,8 @@ export function GameClient({
                                 </div>
                             )}
                     </div>
-                    {/* ボードはマットと同じコンテナ基準で中央に配置（端末差を防ぐ） */}
-                    <div className="absolute left-1/2 top-1/2 w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px] pointer-events-none">
+                    {/* ボードはマットと同じコンテナ基準で中央やや上に配置（マット上方向け） */}
+                    <div className="absolute left-1/2 top-[46%] w-[88%] max-w-[340px] -translate-x-1/2 -translate-y-1/2 min-w-[200px] pointer-events-none">
                         <div className="pointer-events-auto">
                             {displayTableState && (
                                 <BoardPot
@@ -1191,7 +1375,6 @@ export function GameClient({
                                         })
                                     }}
                                     blinds={displayBlinds}
-                                    potOverride={potOverride}
                                     foldVisibleStreet={foldVisibleStreet}
                                 />
                             )}
@@ -1199,98 +1382,63 @@ export function GameClient({
                     </div>
                 </div>
 
-                <div className="relative pb-14 mt-2">
+                <div className="relative pb-4 mt-2 flex flex-col flex-1 min-h-0">
+                    {/* 5秒/30秒ゲージは枠を押し下げない（オーバーレイ表示） */}
                     {(showNextHandGauge || showActionTimer) && (
-                        <div className="absolute left-0 right-0 -top-10 z-10 flex flex-col items-center">
-                            <div className="flex w-full max-w-sm items-center justify-center gap-2">
-                                <div className="relative h-2.5 w-[40%] min-w-[120px] shrink-0 overflow-hidden rounded-full bg-white/60">
-                                    <div
-                                        className="h-full rounded-full bg-amber-300/60 transition-[width]"
-                                        style={{
-                                            width: `${showNextHandGauge
-                                                    ? nextHandDelayPercent
-                                                    : timeGaugePercent
-                                                }%`,
-                                        }}
-                                    />
-                                    <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-black/80 leading-none">
-                                        {showNextHandGauge
-                                            ? nextHandDelaySeconds
-                                            : timeLeftSeconds}
-                                    </div>
+                        <div className="pointer-events-none absolute left-1/2 -top-4 z-[80] w-full max-w-[480px] -translate-x-1/2 flex justify-center">
+                            <div className="relative h-2.5 w-[30%] min-w-[100px] max-w-[160px] shrink-0 overflow-hidden rounded-full bg-white/60 shadow-[0_6px_18px_rgba(0,0,0,0.35)]">
+                                <div
+                                    className="h-full rounded-full bg-amber-300/60 transition-[width]"
+                                    style={{
+                                        width: `${showNextHandGauge
+                                            ? nextHandDelayPercent
+                                            : timeGaugePercent
+                                            }%`,
+                                    }}
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-black/80 leading-none">
+                                    {showNextHandGauge
+                                        ? nextHandDelaySeconds
+                                        : timeLeftSeconds}
                                 </div>
                             </div>
                         </div>
                     )}
-                    <div className="grid grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] gap-3 items-stretch">
-                        <div className="relative min-w-0">
-                            {showBetweenHandsControls && !leaveAfterHand && (
-                                <button
-                                    type="button"
-                                    className="absolute left-0 top-0 -translate-y-full -mt-1 z-10 min-w-[4rem] rounded-md bg-red-800/70 px-3 py-1.5 text-xs font-semibold text-white/90 hover:bg-red-700/70"
-                                    onClick={() => {
-                                        setLeaveAfterHand(true)
-                                        handleLeaveAfterHand(true)
-                                        setNextHandDelayMsLeft(0)
-                                        nextHandDelayMsLeftRef.current = 0
-                                        setIsWaitPaused(false)
-                                        isWaitPausedRef.current = false
-                                        nextHandDelayLastTickRef.current = Date.now()
-                                        setIsNextHandDelayPending(false)
-                                    }}
-                                >
-                                    離席
-                                </button>
-                            )}
-                            <ActionHistory
-                                actions={tableState?.action_history ?? []}
-                                className="min-w-0 min-h-0"
-                                maxHeight={actionControlsHeight}
-                                hideAmounts={hideActionAmounts}
-                            />
-                        </div>
-                        <div className="relative shrink-0 self-start">
-                            <div ref={actionControlsRef}>
-                                <ActionControls
-                                    table={tableState}
-                                    playerId={player.player_id}
-                                    onAction={handleAction}
-                                    forceAllFold={forceAllFold}
-                                    interactionEnabled={actionControlsEnabled}
+                    <div className="mx-auto w-full max-w-[480px] min-h-0 flex-1 flex flex-col overflow-x-hidden overflow-y-visible">
+                        <div className="grid grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] gap-3 items-stretch flex-1 min-h-0 overflow-x-hidden overflow-y-visible">
+                            <div className="relative min-w-0 min-h-0 flex flex-col">
+                                <ActionHistory
+                                    actions={tableState?.action_history ?? []}
+                                    className="min-w-0 min-h-0 flex-1 overflow-auto"
+                                    maxHeight={actionControlsHeight}
+                                    hideAmounts={hideActionAmounts}
                                 />
                             </div>
-                            <div className="absolute right-0 top-0 -translate-y-full -mt-1 mb-1 flex w-[7rem] flex-col items-stretch gap-1">
-                                {showStopNext && (
-                                    <button
-                                        type="button"
-                                        className={`w-full rounded-md px-3 py-1.5 text-xs font-semibold ${isWaitPaused
-                                                ? "bg-white/20 text-white/80 hover:bg-white/30"
-                                                : "bg-amber-400/90 text-slate-900 hover:bg-amber-300"
-                                            }`}
-                                        onClick={handleNextHandDelayToggle}
-                                    >
-                                        {isWaitPaused ? "NEXT" : "STOP"}
-                                    </button>
-                                )}
-                                {!showStopNext &&
-                                    tableState?.street === "settlement" &&
-                                    !hasShowdown && (
-                                    <div className="h-[30px] w-full" />
-                                )}
-                                {tableState?.street === "settlement" &&
-                                    !hasShowdown &&
-                                    !revealByUser ? (
-                                    <button
-                                        type="button"
-                                        className="w-full rounded-md px-3 py-1.5 text-xs font-semibold bg-emerald-400/90 text-slate-900 hover:bg-emerald-300"
-                                        onClick={handleRevealHand}
-                                    >
-                                        ハンドを公開する
-                                    </button>
-                                ) : tableState?.street === "settlement" &&
-                                    !hasShowdown ? (
-                                    <div className="h-[30px] w-full" />
-                                ) : null}
+                            <div className="relative z-[30] shrink-0 self-stretch min-h-0 flex flex-col overflow-visible">
+                                <div ref={actionControlsRef} className="flex-1 min-h-0 flex flex-col">
+                                    <ActionControls
+                                        table={tableState}
+                                        playerId={player.player_id}
+                                        onAction={handleAction}
+                                        forceAllFold={forceAllFold}
+                                        interactionEnabled={actionControlsEnabled}
+                                        leaveSlot={leaveSlot}
+                                        onLeaveAfterHand={() => {
+                                            // 5秒ゲージ中にSTOP済みなら、離席＝NEXT扱いで進める（ゲージを0にして進行再開）
+                                            if (showNextHandGauge && isWaitPaused) {
+                                                handleNextHandDelayToggle()
+                                            }
+                                            setLeaveAfterHand(true)
+                                            setForceNextHandGaugeZero(true)
+                                            handleLeaveAfterHand(true)
+                                        }}
+                                        callSlot={callSlot}
+                                        onRevealHand={handleRevealHand}
+                                        raiseSlot={raiseSlot}
+                                        isWaitPaused={isWaitPaused}
+                                        onNextHandDelayToggle={handleNextHandDelayToggle}
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1331,9 +1479,20 @@ export function GameClient({
                             )}
                             <button
                                 type="button"
+                                className={`rounded px-3 py-2 text-sm font-semibold ${showMenuRandom
+                                    ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
+                                    : "bg-black/70 text-white/80 hover:bg-black/80"
+                                    }`}
+                                onClick={() => setShowMenuRandom((prev) => !prev)}
+                                disabled={!tableState}
+                            >
+                                乱数表示 {showMenuRandom ? "オン" : "オフ"}
+                            </button>
+                            <button
+                                type="button"
                                 className={`rounded px-3 py-2 text-sm font-semibold ${(pendingTimeLimitEnabled ?? timeLimitEnabled)
-                                        ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
-                                        : "bg-black/70 text-white/80 hover:bg-black/80"
+                                    ? "bg-emerald-300 text-slate-900 hover:bg-emerald-200"
+                                    : "bg-black/70 text-white/80 hover:bg-black/80"
                                     }`}
                                 onClick={() => {
                                     const currentTarget =
@@ -1352,8 +1511,8 @@ export function GameClient({
                                 <button
                                     type="button"
                                     className={`rounded px-3 py-2 text-sm font-semibold text-white/90 ${leaveAfterHand
-                                            ? "bg-red-800/70 hover:bg-red-700/70"
-                                            : "bg-black/70 text-white/80 hover:bg-black/80"
+                                        ? "bg-red-800/70 hover:bg-red-700/70"
+                                        : "bg-black/70 text-white/80 hover:bg-black/80"
                                         }`}
                                     onClick={() => {
                                         if (canLeaveImmediately) {

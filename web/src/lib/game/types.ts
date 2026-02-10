@@ -43,6 +43,11 @@ export interface TableState {
     dealer_seat: number
     street: Street
     pot: number
+    /**
+     * Pot breakdown excluding the current street's in-progress contributions.
+     * Format: [main_pot, side_pot_1, side_pot_2, ...]
+     */
+    pot_breakdown_excl_current_street?: number[]
     current_bet: number
     min_raise: number
     board: string[]

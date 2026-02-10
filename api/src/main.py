@@ -112,12 +112,18 @@ async def websocket_game(websocket: WebSocket):
             if (pid := manager.get_player(ws)) is not None
         }
 
-    def table_state_payload() -> dict:
-        return table.to_state(connected_player_ids()).model_dump()
+    def table_state_payload_for(viewer_player_id: str | None) -> dict:
+        return table.to_state_for(viewer_player_id, connected_player_ids()).model_dump()
+
+    async def broadcast_table_state() -> None:
+        connections = list(manager.active_connections.get(table_id, set()))
+        for ws in connections:
+            pid = manager.get_player(ws)
+            await manager.send(ws, {"type": "tableState", "payload": table_state_payload_for(pid)})
 
     await manager.send(
         websocket,
-        {"type": "tableState", "payload": table_state_payload()},
+        {"type": "tableState", "payload": table_state_payload_for(manager.get_player(websocket))},
     )
 
     async def cancel_pending_leave(player_id: str) -> None:
@@ -138,10 +144,7 @@ async def websocket_game(websocket: WebSocket):
             if manager.has_player(player_id):
                 return
             table.leave_player(player_id)
-            await manager.broadcast(
-                table_id,
-                {"type": "tableState", "payload": table_state_payload()},
-            )
+            await broadcast_table_state()
 
         pending_leave_tasks[player_id] = asyncio.create_task(delayed_leave())
 
@@ -154,20 +157,17 @@ async def websocket_game(websocket: WebSocket):
                 return
             table.set_auto_play(player_id, True)
             table.apply_auto_play()
-            await manager.broadcast(
-                table_id,
-                {"type": "tableState", "payload": table_state_payload()},
-            )
+            await broadcast_table_state()
 
         pending_disconnect_tasks[player_id] = asyncio.create_task(delayed_disconnect())
 
     async def start_hand_with_delay() -> None:
         await asyncio.sleep(HAND_DELAY_SECONDS)
         table.start_new_hand()
-        await manager.broadcast(
-            table_id,
-            {"type": "handState", "payload": table_state_payload()},
-        )
+        connections = list(manager.active_connections.get(table_id, set()))
+        for ws in connections:
+            pid = manager.get_player(ws)
+            await manager.send(ws, {"type": "handState", "payload": table_state_payload_for(pid)})
 
     async def wait_for_all_gauges_then_start_hand() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
@@ -192,10 +192,10 @@ async def websocket_game(websocket: WebSocket):
             table._finalize_pending_leaves()
             table._finalize_leave_after_hand()
             table.start_new_hand()
-            await manager.broadcast(
-                table_id,
-                {"type": "handState", "payload": table_state_payload()},
-            )
+            connections = list(manager.active_connections.get(table_id, set()))
+            for ws in connections:
+                pid = manager.get_player(ws)
+                await manager.send(ws, {"type": "handState", "payload": table_state_payload_for(pid)})
 
     try:
         while True:
@@ -218,9 +218,7 @@ async def websocket_game(websocket: WebSocket):
                 else:
                     # 参加時に自動着席せず、席選択に移る
                     pass
-                await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table_state_payload()}
-                )
+                await broadcast_table_state()
             elif message_type == "leaveTable":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
@@ -229,18 +227,12 @@ async def websocket_game(websocket: WebSocket):
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
                     table.mark_leave_after_hand(player_id)
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "tableState", "payload": table_state_payload()},
-                    )
+                    await broadcast_table_state()
             elif message_type == "cancelLeaveAfterHand":
                 player_id = payload.get("player_id") or manager.get_player(websocket)
                 if player_id:
                     table.cancel_leave_after_hand(player_id)
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "tableState", "payload": table_state_payload()},
-                    )
+                    await broadcast_table_state()
             elif message_type == "action":
                 data = ActionPayload(**payload)
                 table.record_action(data)
@@ -248,18 +240,12 @@ async def websocket_game(websocket: WebSocket):
                     table_id,
                     {"type": "actionApplied", "payload": data.model_dump()},
                 )
-                await manager.broadcast(
-                    table_id,
-                    {"type": "tableState", "payload": table_state_payload()},
-                )
+                await broadcast_table_state()
                 while table.should_auto_runout():
                     await asyncio.sleep(RUNOUT_DELAY_SECONDS)
                     if not table.advance_auto_runout():
                         break
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "tableState", "payload": table_state_payload()},
-                    )
+                    await broadcast_table_state()
                 # ハンド終了（settlement）後は全プレイヤーのゲージが0になるまで待ってから次のハンドを開始
                 if (
                     table.street == Street.settlement
@@ -276,14 +262,11 @@ async def websocket_game(websocket: WebSocket):
                 if player_id:
                     data = RevealHandPayload(player_id=player_id)
                     if table.record_hand_reveal(data.player_id):
-                        await manager.broadcast(
-                            table_id,
-                            {"type": "tableState", "payload": table_state_payload()},
-                        )
+                        await broadcast_table_state()
             elif message_type == "syncState":
                 await manager.send(
                     websocket,
-                    {"type": "tableState", "payload": table_state_payload()},
+                    {"type": "tableState", "payload": table_state_payload_for(manager.get_player(websocket))},
                 )
             elif message_type == "heartbeat":
                 # Cloud Run keep-alive: no-op
@@ -291,21 +274,14 @@ async def websocket_game(websocket: WebSocket):
             elif message_type == "reserveSeat":
                 data = ReserveSeatPayload(**payload)
                 table.reserve_seat(data.player_id, data.name, data.seat_index)
-                await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table_state_payload()}
-                )
+                await broadcast_table_state()
             elif message_type == "resetTable":
                 table.reset()
-                await manager.broadcast(
-                    table_id, {"type": "tableState", "payload": table_state_payload()}
-                )
+                await broadcast_table_state()
             elif message_type == "setSaveStats":
                 if table.street == Street.waiting and "save_stats" in payload:
                     table.save_earnings = bool(payload["save_stats"])
-                    await manager.broadcast(
-                        table_id,
-                        {"type": "tableState", "payload": table_state_payload()},
-                    )
+                    await broadcast_table_state()
             elif message_type == "startHand":
                 if (
                     table.street == Street.waiting
@@ -323,10 +299,7 @@ async def websocket_game(websocket: WebSocket):
         if player_id:
             await schedule_disconnect(player_id)
         manager.disconnect(websocket)
-        await manager.broadcast(
-            table_id,
-            {"type": "tableState", "payload": table_state_payload()},
-        )
+        await broadcast_table_state()
     except Exception as exc:
         await manager.send(
             websocket, {"type": "error", "payload": {"message": str(exc)}}

@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { EarningsPanel } from "@/components/game/EarningsPanel"
 import { fetchEarningsSummary } from "@/lib/game/earnings"
 import { EarningsSummary, JoinTablePayload } from "@/lib/game/types"
@@ -90,7 +92,7 @@ export function JoinTableScreen({
     }
 
     return (
-        <div className="flex min-h-screen flex-col bg-emerald-950 text-white">
+        <div className="flex flex-1 min-h-0 flex-col bg-emerald-950 text-white">
             {/* メイン: おかえりなさい（名前入力） or ゲームテーブル */}
             <main className="flex-1 min-h-0 flex flex-col">
                 {player ? (
@@ -142,7 +144,7 @@ export function JoinTableScreen({
             </main>
 
             {!player && (
-                <div className="shrink-0 px-4 pb-3">
+                <div className="shrink-0 px-4 pb-3 mx-auto w-full max-w-sm min-w-0">
                     <EarningsPanel
                         title="あなたの収支"
                         summary={earningsSummary}
@@ -155,8 +157,8 @@ export function JoinTableScreen({
             )}
             {/* フッター: メール・ログアウトはHOME（名前入力）のときのみ表示。ポーカー画面では非表示 */}
             {!player && (
-                <footer className="shrink-0 border-t-2 border-white bg-emerald-950/95 px-4 py-3 mx-4 mb-4 rounded-lg">
-                    <div className="mx-auto flex max-w-sm items-center justify-between gap-3">
+                <footer className="shrink-0 border-t-2 border-white bg-emerald-950/95 px-4 py-3 mx-auto mb-4 rounded-lg w-full max-w-sm min-w-0">
+                    <div className="flex items-center justify-between gap-3 min-w-0">
                         <p className="min-w-0 truncate text-sm text-white/90">
                             {email ?? "—"}
                         </p>
