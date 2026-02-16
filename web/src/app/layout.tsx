@@ -21,7 +21,7 @@ export const metadata: Metadata = {
             { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
         ],
         apple: [
-            { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+            { url: "/icon-180.png", sizes: "180x180", type: "image/png" },
         ],
     },
 }
@@ -47,7 +47,7 @@ export default function RootLayout({
                 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
                 <meta name="apple-mobile-web-app-title" content="Dragons Poker Online" />
                 <meta name="format-detection" content="telephone=no" />
-                <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+                <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
             </head>
             <body className="bg-emerald-950">
                 <div className="flex flex-col h-[100dvh] min-h-0 overflow-hidden w-full bg-emerald-950">

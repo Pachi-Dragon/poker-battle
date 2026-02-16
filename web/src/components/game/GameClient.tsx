@@ -73,7 +73,7 @@ export function GameClient({
     const earningsCacheRef = useRef<Map<string, EarningsSummary>>(new Map())
     const timeLimitSeconds = 30
     const timeLimitMs = timeLimitSeconds * 1000
-    const [timeLimitEnabled, setTimeLimitEnabled] = useState(false)
+    const [timeLimitEnabled, setTimeLimitEnabled] = useState(true)
     const [pendingTimeLimitEnabled, setPendingTimeLimitEnabled] = useState<
         boolean | null
     >(null)
@@ -110,7 +110,7 @@ export function GameClient({
     )
     const prevStreetRef = useRef<TableState["street"] | null>(null)
     const prevHandNumberRef = useRef<number | null>(null)
-    const heartbeatTimeoutRef = useRef<number | null>(null)
+    const heartbeatIntervalRef = useRef<number | null>(null)
     const actionControlsDelayTimeoutRef = useRef<number | null>(null)
     const [saveStats, setSaveStats] = useState(false)
     /** settlement + hasShowdown 時の表示フェーズ: hands = ハンド公開のみ, win = 勝者・ゲージ・ボタン表示 */
@@ -123,23 +123,11 @@ export function GameClient({
         null
     )
 
-    const scheduleHeartbeat = () => {
-        if (heartbeatTimeoutRef.current) {
-            window.clearTimeout(heartbeatTimeoutRef.current)
-        }
-        heartbeatTimeoutRef.current = window.setTimeout(() => {
-            sendMessage({
-                type: "heartbeat",
-                payload: { player_id: player.player_id },
-            })
-        }, heartbeatIntervalMs)
-    }
-
-    const sendMessage = (message: { type: string; payload?: unknown }) => {
+    const sendMessage = (message: { type: string; payload?: unknown }): boolean => {
         const socket = socketRef.current
-        if (!socket || socket.readyState !== WebSocket.OPEN) return
+        if (!socket || socket.readyState !== WebSocket.OPEN) return false
         socket.send(JSON.stringify(message))
-        scheduleHeartbeat()
+        return true
     }
 
     const openEarningsForSeat = (seat: {
@@ -208,9 +196,12 @@ export function GameClient({
             // NEXT: move gauge to 0 immediately
             isWaitPausedRef.current = false
             setIsWaitPaused(false)
-            nextHandDelayLastTickRef.current = Date.now()
+            // Reset tick base; the interval will re-seed this on the next run.
+            nextHandDelayLastTickRef.current = null
             nextHandDelayMsLeftRef.current = 0
             setNextHandDelayMsLeft(0)
+            setIsNextHandAwaiting(true)
+            requestNextHandStart()
             return
         }
         // STOP
@@ -364,11 +355,28 @@ export function GameClient({
         setFrozenBlinds(null)
     }
 
-    const sendNextHandGaugeComplete = () => {
-        sendMessage({
+    const pendingNextHandGaugeCompleteRef = useRef(false)
+
+    const sendNextHandGaugeComplete = (): boolean => {
+        return sendMessage({
             type: "nextHandGaugeComplete",
             payload: { player_id: player.player_id },
         })
+    }
+
+    const requestNextHandStart = () => {
+        pendingNextHandGaugeCompleteRef.current = true
+        flushPendingNextHandGaugeComplete()
+    }
+
+    const flushPendingNextHandGaugeComplete = () => {
+        const state = tableStateRef.current
+        if (!pendingNextHandGaugeCompleteRef.current) return
+        if (!state || state.street !== "settlement") return
+        const ok = sendNextHandGaugeComplete()
+        if (ok) {
+            pendingNextHandGaugeCompleteRef.current = false
+        }
     }
 
     const clearActionControlsDelay = () => {
@@ -498,10 +506,8 @@ export function GameClient({
     }
 
     useEffect(() => {
-        const stored = window.localStorage.getItem("pokerTimeLimitEnabled")
-        if (stored !== null) {
-            setTimeLimitEnabled(stored === "1")
-        }
+        // Always enable action time limit on join (ignore localStorage).
+        setTimeLimitEnabled(true)
     }, [])
 
     useEffect(() => {
@@ -534,18 +540,42 @@ export function GameClient({
                 payload: player,
             }
             sendMessage(message)
+            // Heartbeat: send periodically even during STOP/idle.
+            if (heartbeatIntervalRef.current) {
+                window.clearInterval(heartbeatIntervalRef.current)
+            }
+            heartbeatIntervalRef.current = window.setInterval(() => {
+                const ws = socketRef.current
+                if (!ws || ws.readyState !== WebSocket.OPEN) return
+                ws.send(
+                    JSON.stringify({
+                        type: "heartbeat",
+                        payload: { player_id: player.player_id },
+                    })
+                )
+            }, heartbeatIntervalMs)
+            // If we reached gauge-complete while disconnected, retry once on reconnect.
+            flushPendingNextHandGaugeComplete()
         })
 
         socket.addEventListener("close", () => {
             if (socketRef.current !== socket) return
             if (!didOpen) return
             setIsDisconnected(true)
+            if (heartbeatIntervalRef.current) {
+                window.clearInterval(heartbeatIntervalRef.current)
+                heartbeatIntervalRef.current = null
+            }
         })
 
         socket.addEventListener("error", () => {
             if (socketRef.current !== socket) return
             if (!didOpen) return
             setIsDisconnected(true)
+            if (heartbeatIntervalRef.current) {
+                window.clearInterval(heartbeatIntervalRef.current)
+                heartbeatIntervalRef.current = null
+            }
         })
 
         socket.addEventListener("message", (event) => {
@@ -665,9 +695,9 @@ export function GameClient({
         })
 
         return () => {
-            if (heartbeatTimeoutRef.current) {
-                window.clearTimeout(heartbeatTimeoutRef.current)
-                heartbeatTimeoutRef.current = null
+            if (heartbeatIntervalRef.current) {
+                window.clearInterval(heartbeatIntervalRef.current)
+                heartbeatIntervalRef.current = null
             }
             socket.close()
         }
@@ -812,7 +842,7 @@ export function GameClient({
                 if (gaugeScheduledHandRef.current !== state.hand_number) {
                     gaugeScheduledHandRef.current = state.hand_number
                     scheduleNextHandDelay(state, revealToGaugeDelayMs, {
-                        onGaugeComplete: sendNextHandGaugeComplete,
+                        onGaugeComplete: requestNextHandStart,
                     })
                 }
             }
@@ -835,7 +865,7 @@ export function GameClient({
                 if (gaugeScheduledHandRef.current !== state.hand_number) {
                     gaugeScheduledHandRef.current = state.hand_number
                     scheduleNextHandDelay(state, revealToGaugeDelayMs, {
-                        onGaugeComplete: sendNextHandGaugeComplete,
+                        onGaugeComplete: requestNextHandStart,
                     })
                 }
             }
@@ -960,7 +990,7 @@ export function GameClient({
                         )
                     } else {
                         scheduleNextHandDelay(tableState, revealToGaugeDelayMs, {
-                            onGaugeComplete: sendNextHandGaugeComplete,
+                            onGaugeComplete: requestNextHandStart,
                         })
                     }
                 }
@@ -1260,8 +1290,8 @@ export function GameClient({
     const potWinnerPlayerIds = useMemo(() => {
         const ids = new Set<string>()
         if (!displayTableState) return ids
-        // 表示開始は「5秒ゲージ出現時」
-        if (!showNextHandGauge) return ids
+        // 表示開始は「5秒ゲージ出現時」だが、次ハンド開始までは維持する
+        if (!showBetweenHandsControls) return ids
         displayTableState.action_history?.forEach((action) => {
             const act = (action.action ?? "").toLowerCase()
             if (act !== "payout") return
@@ -1271,7 +1301,7 @@ export function GameClient({
             ids.add(action.actor_id)
         })
         return ids
-    }, [displayTableState, showNextHandGauge])
+    }, [displayTableState, showBetweenHandsControls])
 
     const handContribTotalsByPlayerId = useMemo(() => {
         const totals = new Map<string, number>()

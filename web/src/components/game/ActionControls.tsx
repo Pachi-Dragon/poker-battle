@@ -94,6 +94,7 @@ export function ActionControls({
     const forcedByTimerRef = useRef(false)
     const lastAutoActionRef = useRef<string | null>(null)
     const prevStreetRef = useRef<TableState["street"] | null>(table?.street ?? null)
+    const prevHandNumberRef = useRef<number | null>(table?.hand_number ?? null)
     const quickBetScrollRef = useRef<HTMLDivElement | null>(null)
     const amountOverlayButtonRef = useRef<HTMLButtonElement | null>(null)
     const amountOverlayPanelRef = useRef<HTMLDivElement | null>(null)
@@ -220,6 +221,28 @@ export function ActionControls({
         }
         prevStreetRef.current = currentStreet
     }, [table?.street, allFoldCheckedThisStreet])
+
+    // Reset "All Fold" (fast fold) at the start of the next hand.
+    // Connected players will receive a new `hand_number`, so this ensures the toggle is OFF each hand.
+    useEffect(() => {
+        const currentHand = table?.hand_number ?? null
+        if (currentHand === null) return
+        const prevHand = prevHandNumberRef.current
+        if (prevHand === null) {
+            prevHandNumberRef.current = currentHand
+            return
+        }
+        if (currentHand === prevHand) return
+
+        // Do not override timer-forced behavior; only reset the user toggle state.
+        if (!forceAllFold) {
+            setAllFoldEnabled(false)
+            setAllFoldCheckedThisStreet(false)
+        }
+        // Avoid carrying over auto-action dedupe keys across hands.
+        lastAutoActionRef.current = null
+        prevHandNumberRef.current = currentHand
+    }, [table?.hand_number, forceAllFold])
 
     useEffect(() => {
         if (forceAllFold) {

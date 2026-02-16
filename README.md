@@ -1,5 +1,56 @@
 # poker-battle
 
+## ローカルでのゲーム起動（開発）
+
+API（FastAPI）と Web（Next.js）をそれぞれローカルで起動します。
+
+### 前提
+- Node.js（LTS 推奨）/ npm
+- Python 3.12+
+
+### 1) API を起動（FastAPI）
+
+1. `api/.env` を作成（または編集）して、Google OAuth の **クライアントID** を設定します。
+   - **`GOOGLE_CLIENT_ID`**: Google Cloud Console の OAuth 2.0 Client ID
+
+2. 依存を入れて起動します（PowerShell 例）。
+
+```powershell
+cd api
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install -e .
+uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+3. ログイン許可（allowlist）
+   - ローカルでは `api/data/allows.json` の `emails` にあるメールだけログインできます。
+   - 全員許可にしたい場合は `emails` を空配列 `[]` にしてください。
+
+### 2) Web を起動（Next.js）
+
+1. `web/.env.local` を作成（または編集）して、Web 側の環境変数を設定します（値は各自のものを入れてください）。
+   - **`NEXT_PUBLIC_API_URL`**: `http://localhost:8000`
+   - **`AUTH_GOOGLE_ID`** / **`AUTH_GOOGLE_SECRET`**: Google OAuth の Client ID / Secret
+   - **`AUTH_SECRET`**: Auth.js 用（`npx auth secret` で生成可）
+
+2. 依存を入れて起動します。
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+3. ブラウザで `http://localhost:3000` を開きます。
+
+### ローカルでの Google OAuth 設定メモ
+- Google Cloud Console の OAuth 同意画面/認証情報で、少なくとも以下を追加してください。
+  - **承認済みの JavaScript 生成元**: `http://localhost:3000`
+  - **承認済みのリダイレクト URI**: `http://localhost:3000/api/auth/callback/google`
+- `api/.env` の `GOOGLE_CLIENT_ID` と `web/.env.local` の `AUTH_GOOGLE_ID` は **同じ Client ID** にしてください（API 側で ID トークン検証に使います）。
+
 ## Cloud Run デプロイ（フロントエンド）
 
 `web/` を Cloud Run にデプロイする例（リージョン・プロジェクトは適宜変更）。

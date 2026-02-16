@@ -172,30 +172,48 @@ async def websocket_game(websocket: WebSocket):
     async def wait_for_all_gauges_then_start_hand() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
         settlement_gauge_ready = set()
-        settlement_gauge_timeout_task = None
+        # No timeout: keep waiting until all connected players send `nextHandGaugeComplete`.
+        # (If a previous hand had a scheduled task, ensure it's cleared.)
+        if settlement_gauge_timeout_task:
+            settlement_gauge_timeout_task.cancel()
+            settlement_gauge_timeout_task = None
+
+    async def start_next_hand_from_settlement(expected_hand_number: int) -> None:
+        """
+        Finalize settlement and start a new hand.
+
+        Guarded by (street == settlement && hand_number matches) so it can be safely called
+        from both gauge-complete and timeout paths without double-starting.
+        """
+        global settlement_gauge_ready, settlement_gauge_timeout_task
+        if table.street != Street.settlement or table.hand_number != expected_hand_number:
+            return
+        if settlement_gauge_timeout_task:
+            settlement_gauge_timeout_task.cancel()
+            settlement_gauge_timeout_task = None
+        settlement_gauge_ready.clear()
+        try:
+            if table.save_earnings:
+                updates = table.build_earnings_updates()
+                await earnings_store.apply_updates(updates)
+        except Exception as exc:
+            print(f"earnings update failed: {exc}")
+        table.apply_pending_payouts()
+        table._finalize_pending_leaves()
+        table._finalize_leave_after_hand()
+        table.start_new_hand()
+        connections = list(manager.active_connections.get(table_id, set()))
+        for ws in connections:
+            pid = manager.get_player(ws)
+            await manager.send(
+                ws, {"type": "handState", "payload": table_state_payload_for(pid)}
+            )
 
     async def check_gauge_complete_and_start() -> None:
         global settlement_gauge_ready, settlement_gauge_timeout_task
         required = connected_player_ids()
         if required and settlement_gauge_ready >= required:
-            if settlement_gauge_timeout_task:
-                settlement_gauge_timeout_task.cancel()
-                settlement_gauge_timeout_task = None
-            settlement_gauge_ready.clear()
-            try:
-                if table.save_earnings:
-                    updates = table.build_earnings_updates()
-                    await earnings_store.apply_updates(updates)
-            except Exception as exc:
-                print(f"earnings update failed: {exc}")
-            table.apply_pending_payouts()
-            table._finalize_pending_leaves()
-            table._finalize_leave_after_hand()
-            table.start_new_hand()
-            connections = list(manager.active_connections.get(table_id, set()))
-            for ws in connections:
-                pid = manager.get_player(ws)
-                await manager.send(ws, {"type": "handState", "payload": table_state_payload_for(pid)})
+            await start_next_hand_from_settlement(table.hand_number)
 
     try:
         while True:
