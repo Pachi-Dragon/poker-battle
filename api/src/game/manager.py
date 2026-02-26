@@ -1464,11 +1464,19 @@ class ConnectionManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.socket_players: Dict[WebSocket, str] = {}
         self.socket_tables: Dict[WebSocket, str] = {}
+        # 認証済みユーザー（email）をWebSocketごとに保持
+        self.socket_auth_user: Dict[WebSocket, str] = {}
 
     async def connect(self, table_id: str, websocket: WebSocket) -> None:
         await websocket.accept()
         self.active_connections.setdefault(table_id, set()).add(websocket)
         self.socket_tables[websocket] = table_id
+
+    def set_auth_user(self, websocket: WebSocket, email: str) -> None:
+        self.socket_auth_user[websocket] = email
+
+    def get_auth_user(self, websocket: WebSocket) -> Optional[str]:
+        return self.socket_auth_user.get(websocket)
 
     def set_player(self, websocket: WebSocket, player_id: str) -> None:
         self.socket_players[websocket] = player_id
@@ -1485,6 +1493,7 @@ class ConnectionManager:
             self.active_connections[table_id].discard(websocket)
         self.socket_players.pop(websocket, None)
         self.socket_tables.pop(websocket, None)
+        self.socket_auth_user.pop(websocket, None)
 
     async def broadcast(self, table_id: str, message: dict) -> None:
         for connection in list(self.active_connections.get(table_id, set())):
