@@ -526,12 +526,25 @@ export function GameClient({
     }, [showMenuRandom])
 
     useEffect(() => {
-        const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game"
-        const socket = new WebSocket(wsUrl)
-        socketRef.current = socket
-        let didOpen = false
+        let cancelled = false
+        let socket: WebSocket | null = null
 
-        socket.addEventListener("open", () => {
+        const connect = async () => {
+            const res = await fetch("/api/auth/ws-token", { credentials: "include" })
+            if (cancelled) return
+            if (!res.ok) {
+                router.push("/")
+                return
+            }
+            const { token } = (await res.json()) as { token: string }
+            if (cancelled || !token) return
+
+            const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/game?token=" + encodeURIComponent(token)
+            socket = new WebSocket(wsUrl)
+            socketRef.current = socket
+            let didOpen = false
+
+            socket.addEventListener("open", () => {
             if (socketRef.current !== socket) return
             didOpen = true
             setIsDisconnected(false)
@@ -558,27 +571,31 @@ export function GameClient({
             flushPendingNextHandGaugeComplete()
         })
 
-        socket.addEventListener("close", () => {
-            if (socketRef.current !== socket) return
-            if (!didOpen) return
-            setIsDisconnected(true)
-            if (heartbeatIntervalRef.current) {
-                window.clearInterval(heartbeatIntervalRef.current)
-                heartbeatIntervalRef.current = null
-            }
-        })
+            socket.addEventListener("close", (event) => {
+                if (socketRef.current !== socket) return
+                if (!didOpen) return
+                if (event.code === 4001) {
+                    router.push("/")
+                    return
+                }
+                setIsDisconnected(true)
+                if (heartbeatIntervalRef.current) {
+                    window.clearInterval(heartbeatIntervalRef.current)
+                    heartbeatIntervalRef.current = null
+                }
+            })
 
-        socket.addEventListener("error", () => {
-            if (socketRef.current !== socket) return
-            if (!didOpen) return
-            setIsDisconnected(true)
-            if (heartbeatIntervalRef.current) {
-                window.clearInterval(heartbeatIntervalRef.current)
-                heartbeatIntervalRef.current = null
-            }
-        })
+            socket.addEventListener("error", () => {
+                if (socketRef.current !== socket) return
+                if (!didOpen) return
+                setIsDisconnected(true)
+                if (heartbeatIntervalRef.current) {
+                    window.clearInterval(heartbeatIntervalRef.current)
+                    heartbeatIntervalRef.current = null
+                }
+            })
 
-        socket.addEventListener("message", (event) => {
+            socket.addEventListener("message", (event) => {
             const message: GameMessage<TableState> = JSON.parse(event.data)
             if (message.type === "tableState" || message.type === "handState") {
                 const nextState = message.payload ?? null
@@ -693,15 +710,23 @@ export function GameClient({
                 )
             }
         })
+        }
+
+        connect()
 
         return () => {
+            cancelled = true
             if (heartbeatIntervalRef.current) {
                 window.clearInterval(heartbeatIntervalRef.current)
                 heartbeatIntervalRef.current = null
             }
-            socket.close()
+            const ws = socketRef.current
+            if (ws && ws.readyState !== WebSocket.CLOSED) {
+                ws.close()
+            }
+            socketRef.current = null
         }
-    }, [apiUrl, player.player_id, player.name, reconnectToken])
+    }, [apiUrl, player.player_id, player.name, reconnectToken, router])
 
     useEffect(() => {
         tableStateRef.current = tableState
