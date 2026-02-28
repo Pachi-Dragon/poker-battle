@@ -131,11 +131,11 @@ export function GameClient({
     }
 
     const openEarningsForSeat = (seat: {
-        player_id?: string | null
+        email?: string | null
         name?: string | null
     }) => {
-        if (!seat.player_id) return
-        setEarningsTarget({ email: seat.player_id, name: seat.name })
+        if (!seat.email) return
+        setEarningsTarget({ email: seat.email, name: seat.name })
     }
 
     const fetchTargetEarnings = (forceRefresh = false) => {
@@ -220,8 +220,8 @@ export function GameClient({
         >()
         state.action_history.forEach((action: ActionRecord) => {
             if (action.street !== street) return
-            if (!action.actor_id) return
-            lastActionBySeat.set(action.actor_id, {
+            if (!action.actor_email) return
+            lastActionBySeat.set(action.actor_email, {
                 action: action.action,
                 amount: action.amount,
             })
@@ -236,16 +236,16 @@ export function GameClient({
         const autoRunoutLike = Boolean(
             (state.current_turn_seat === null || state.current_turn_seat === undefined) &&
             ["preflop", "flop", "turn", "river"].includes(state.street) &&
-            state.seats.some((s) => s.player_id && !s.is_folded && s.is_all_in) &&
-            state.seats.filter((s) => s.player_id && !s.is_folded).length >= 2
+            state.seats.some((s) => s.email && !s.is_folded && s.is_all_in) &&
+            state.seats.filter((s) => s.email && !s.is_folded).length >= 2
         )
         return {
             ...state,
             seats: state.seats.map((seat) => ({
                 ...seat,
                 last_action: (() => {
-                    if (!seat.player_id) return null
-                    const fromThisStreet = lastActionBySeat.get(seat.player_id)?.action ?? null
+                    if (!seat.email) return null
+                    const fromThisStreet = lastActionBySeat.get(seat.email)?.action ?? null
                     if (fromThisStreet) return fromThisStreet
                     // 自動ランアウト中は、オールイン金額だけ前ストリートから引き継ぐ
                     if (!autoRunoutLike) return null
@@ -255,8 +255,8 @@ export function GameClient({
                     return "all-in"
                 })(),
                 last_action_amount: (() => {
-                    if (!seat.player_id) return null
-                    const fromThisStreet = lastActionBySeat.get(seat.player_id)?.amount ?? null
+                    if (!seat.email) return null
+                    const fromThisStreet = lastActionBySeat.get(seat.email)?.amount ?? null
                     if (fromThisStreet !== null && fromThisStreet !== undefined) return fromThisStreet
                     if (!autoRunoutLike) return null
                     const prev = prevByIndex.get(seat.seat_index)
@@ -302,7 +302,7 @@ export function GameClient({
                 return {
                     ...base,
                     seats: base.seats.map((s) => {
-                        if (!s.player_id) return s
+                        if (!s.email) return s
                         if (!s.is_folded) return s
                         // Folded seats should always show "Fold" (not post_sb etc).
                         return { ...s, last_action: "fold", last_action_amount: null }
@@ -360,7 +360,7 @@ export function GameClient({
     const sendNextHandGaugeComplete = (): boolean => {
         return sendMessage({
             type: "nextHandGaugeComplete",
-            payload: { player_id: player.player_id },
+            payload: { email: player.email },
         })
     }
 
@@ -550,7 +550,7 @@ export function GameClient({
                 ws.send(
                     JSON.stringify({
                         type: "heartbeat",
-                        payload: { player_id: player.player_id },
+                        payload: { email: player.email },
                     })
                 )
             }, heartbeatIntervalMs)
@@ -701,7 +701,7 @@ export function GameClient({
             }
             socket.close()
         }
-    }, [apiUrl, player.player_id, player.name, reconnectToken])
+    }, [apiUrl, player.email, player.name, reconnectToken])
 
     useEffect(() => {
         tableStateRef.current = tableState
@@ -795,8 +795,8 @@ export function GameClient({
 
     const heroSeat = useMemo(() => {
         if (!tableState) return null
-        return tableState.seats.find((seat) => seat.player_id === player.player_id)
-    }, [tableState, player.player_id])
+        return tableState.seats.find((seat) => seat.email === player.email)
+    }, [tableState, player.email])
     const hasShowdown = useMemo(
         () =>
             Boolean(
@@ -810,8 +810,8 @@ export function GameClient({
         const ids = new Set<string>()
         tableState?.action_history?.forEach((action) => {
             if ((action.action ?? "").toLowerCase() !== "hand_reveal") return
-            if (!action.actor_id) return
-            ids.add(action.actor_id)
+            if (!action.actor_email) return
+            ids.add(action.actor_email)
         })
         return ids
     }, [tableState?.action_history])
@@ -893,7 +893,7 @@ export function GameClient({
     const canStartHand = Boolean(
         tableState &&
         tableState.street === "waiting" &&
-        tableState.seats.filter((seat) => seat.player_id).length >= 2
+        tableState.seats.filter((seat) => seat.email).length >= 2
     )
 
     useEffect(() => {
@@ -1069,7 +1069,7 @@ export function GameClient({
     const handleLeave = () => {
         sendMessage({
             type: "leaveTable",
-            payload: { player_id: player.player_id },
+            payload: { email: player.email },
         })
         if (embeddedInHome && onBackToHome) {
             onBackToHome()
@@ -1082,7 +1082,7 @@ export function GameClient({
         // 未着席/待機中はゲーム状況を待たずに参加画面へ戻す
         sendMessage({
             type: "leaveNow",
-            payload: { player_id: player.player_id },
+            payload: { email: player.email },
         })
         if (embeddedInHome && onBackToHome) {
             onBackToHome()
@@ -1097,7 +1097,7 @@ export function GameClient({
 
     const handleReserveSeat = (seatIndex: number) => {
         const payload: ReserveSeatPayload = {
-            player_id: player.player_id,
+            email: player.email,
             name: player.name,
             seat_index: seatIndex,
         }
@@ -1112,14 +1112,14 @@ export function GameClient({
         setRevealByUser(true)
         sendMessage({
             type: "revealHand",
-            payload: { player_id: player.player_id },
+            payload: { email: player.email },
         })
     }
 
     const handleLeaveAfterHand = (nextValue: boolean) => {
         sendMessage({
             type: nextValue ? "leaveAfterHand" : "cancelLeaveAfterHand",
-            payload: { player_id: player.player_id },
+            payload: { email: player.email },
         })
     }
 
@@ -1198,8 +1198,8 @@ export function GameClient({
         ["preflop", "flop", "turn", "river"].includes(displayTableState.street) &&
         (displayTableState.current_turn_seat === null ||
             displayTableState.current_turn_seat === undefined) &&
-        displayTableState.seats.some((s) => s.player_id && !s.is_folded && s.is_all_in) &&
-        displayTableState.seats.filter((s) => s.player_id && !s.is_folded).length >= 2
+        displayTableState.seats.some((s) => s.email && !s.is_folded && s.is_all_in) &&
+        displayTableState.seats.filter((s) => s.email && !s.is_folded).length >= 2
     )
     // 自動ランアウトが始まったハンドでは、席の「アクション表示（チップバッジ）」は復活させない。
     // ただしプリフロップでオールインした直後（preflop表示中）は出しておき、フロップ以降で非表示。
@@ -1280,9 +1280,9 @@ export function GameClient({
         displayTableState.action_history?.forEach((action) => {
             const act = (action.action ?? "").toLowerCase()
             if (act !== "payout") return
-            if (!action.actor_id) return
+            if (!action.actor_email) return
             const amount = action.amount ?? 0
-            totals.set(action.actor_id, (totals.get(action.actor_id) ?? 0) + amount)
+            totals.set(action.actor_email, (totals.get(action.actor_email) ?? 0) + amount)
         })
         return totals
     }, [displayTableState, showHandResultOverlays])
@@ -1295,10 +1295,10 @@ export function GameClient({
         displayTableState.action_history?.forEach((action) => {
             const act = (action.action ?? "").toLowerCase()
             if (act !== "payout") return
-            if (!action.actor_id) return
+            if (!action.actor_email) return
             const amount = action.amount ?? 0
             if (amount <= 0) return
-            ids.add(action.actor_id)
+            ids.add(action.actor_email)
         })
         return ids
     }, [displayTableState, showBetweenHandsControls])
@@ -1310,7 +1310,7 @@ export function GameClient({
         // server-side hand_contribs を action_history から復元する（表示用）
         const streetCommit = new Map<string, number>() // per-street total commit
         const seatedPlayerIds = displayTableState.seats
-            .map((s) => s.player_id)
+            .map((s) => s.email)
             .filter((id): id is string => Boolean(id))
 
         // server の _refund_uncalled_bet を UI 用に再現（action_history には記録されない）
@@ -1354,8 +1354,8 @@ export function GameClient({
             }
             if (act === "hand-start" || act === "auto-topup" || act === "manual-topup") return
 
-            if (!record.actor_id) return
-            const actorId = record.actor_id
+            if (!record.actor_email) return
+            const actorId = record.actor_email
             const amount = record.amount ?? 0
             if (amount <= 0) return
             // No money moved
@@ -1392,11 +1392,11 @@ export function GameClient({
         if (!showHandResultOverlays) return results
         const canShowLabel = Boolean(hasShowdown && displayTableState.board.length >= 5)
         displayTableState.seats.forEach((seat) => {
-            if (!seat.player_id) return
+            if (!seat.email) return
             // ハンドがない席（未配布/参加してない）は何も表示しない
             if (!seat.hole_cards || seat.hole_cards.length < 2) return
-            const payout = payoutTotalsByPlayerId.get(seat.player_id) ?? 0
-            const contrib = handContribTotalsByPlayerId.get(seat.player_id) ?? 0
+            const payout = payoutTotalsByPlayerId.get(seat.email) ?? 0
+            const contrib = handContribTotalsByPlayerId.get(seat.email) ?? 0
             const delta = payout - contrib
             const label =
                 canShowLabel && !seat.is_folded
@@ -1521,7 +1521,7 @@ export function GameClient({
                                 posIndex === 0 || posIndex === 1 || posIndex === 5
                             const pos = getSeatPositionStyle(seat.seat_index)
                             const isRevealed = Boolean(
-                                seat.player_id && revealedHandPlayerIds.has(seat.player_id)
+                                seat.email && revealedHandPlayerIds.has(seat.email)
                             )
                             return (
                                 <div
@@ -1540,12 +1540,12 @@ export function GameClient({
                                             )
                                         }
                                         isPotWinner={Boolean(
-                                            seat.player_id && potWinnerPlayerIds.has(seat.player_id)
+                                            seat.email && potWinnerPlayerIds.has(seat.email)
                                         )}
                                         isTopSeat={isTopSeat}
                                         blinds={displayBlinds}
                                         isUncontestedHand={isUncontestedHand}
-                                        canReserve={isWaitingPlayer && !seat.player_id}
+                                        canReserve={isWaitingPlayer && !seat.email}
                                         showHoleCards={
                                             heroSeat?.seat_index === seat.seat_index ||
                                             (inShowdownStreet &&
@@ -1630,7 +1630,7 @@ export function GameClient({
                                 <div ref={actionControlsRef} className="flex-1 min-h-0 flex flex-col">
                                     <ActionControls
                                         table={tableState}
-                                        playerId={player.player_id}
+                                        email={player.email}
                                         onAction={handleAction}
                                         forceAllFold={forceAllFold}
                                         interactionEnabled={actionControlsEnabled}
@@ -1733,7 +1733,7 @@ export function GameClient({
                                     if (!canRequestManualTopup || manualTopupPending) return
                                     sendMessage({
                                         type: "requestManualTopup",
-                                        payload: { player_id: player.player_id },
+                                        payload: { email: player.email },
                                     })
                                     setManualTopupPending(true)
                                 }}

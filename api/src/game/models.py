@@ -26,13 +26,13 @@ class ActionType(str, Enum):
 
 
 class PlayerInfo(BaseModel):
-    player_id: str
+    email: str
     name: str
 
 
 class SeatState(BaseModel):
     seat_index: int
-    player_id: Optional[str] = None
+    email: Optional[str] = None
     name: Optional[str] = None
     stack: int = 0
     # Stack snapshot at the start of the current hand (before forced blinds/bets).
@@ -50,7 +50,7 @@ class SeatState(BaseModel):
 
 
 class ActionRecord(BaseModel):
-    actor_id: Optional[str] = None
+    actor_email: Optional[str] = None
     actor_name: Optional[str] = None
     action: str
     amount: Optional[int] = None
@@ -80,22 +80,22 @@ class TableState(BaseModel):
 
 
 class JoinTablePayload(BaseModel):
-    player_id: str
+    email: str
     name: str
 
 
 class ActionPayload(BaseModel):
-    player_id: str
+    email: str
     action: ActionType
     amount: Optional[int] = None
 
 
 class ReserveSeatPayload(BaseModel):
-    player_id: str
+    email: str
     name: str
     seat_index: int
 
 
 class RevealHandPayload(BaseModel):
-    player_id: str
+    email: str
 
