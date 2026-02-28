@@ -48,7 +48,7 @@ export function SeatCard({
     onSelect,
 }: SeatCardProps) {
     const cardDropAnimationMs = 420
-    const occupied = Boolean(seat.player_id)
+    const occupied = Boolean(seat.email)
     const hasPosition = occupied && Boolean(seat.position)
     const isDisconnected = occupied && seat.is_connected === false
     const isFolded = occupied && seat.is_folded

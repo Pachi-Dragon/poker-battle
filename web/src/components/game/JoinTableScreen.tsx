@@ -10,9 +10,8 @@ import { useEffect, useState } from "react"
 import { GameClient } from "./GameClient"
 
 interface JoinTableScreenProps {
-    playerId: string
+    email: string
     defaultName: string
-    email?: string | null
 }
 
 /**
@@ -21,9 +20,8 @@ interface JoinTableScreenProps {
  * テーブル参加は独立画面にせず、おかえりなさい画面に統合。
  */
 export function JoinTableScreen({
-    playerId,
-    defaultName,
     email,
+    defaultName,
 }: JoinTableScreenProps) {
     const [name, setName] = useState(defaultName)
     const [player, setPlayer] = useState<JoinTablePayload | null>(null)
@@ -88,7 +86,7 @@ export function JoinTableScreen({
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
         const trimmed = name.trim() || defaultName
-        setPlayer({ player_id: playerId, name: trimmed })
+        setPlayer({ email, name: trimmed })
     }
 
     return (

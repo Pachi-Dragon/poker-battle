@@ -150,7 +150,7 @@ class GameTable:
         # Keyed by seat_index.
         self.hand_start_stack_by_seat_index: Dict[int, int] = {}
 
-    def request_manual_topup(self, player_id: str) -> bool:
+    def request_manual_topup(self, email: str) -> bool:
         """
         Request +auto_topup_amount chips to be added from the next hand.
 
@@ -159,7 +159,7 @@ class GameTable:
         - Does not affect earnings (stack is adjusted directly; no contrib/payout).
         - Idempotent: repeated requests are treated as success.
         """
-        seat = self._find_seat(player_id)
+        seat = self._find_seat(email)
         if not seat:
             raise ValueError("Player not seated")
         start_stack = self.hand_start_stack_by_seat_index.get(seat.seat_index, seat.stack)
@@ -175,12 +175,12 @@ class GameTable:
             if seat_index < 0 or seat_index >= self.max_players:
                 continue
             seat = self.seats[seat_index]
-            if not seat.player_id:
+            if not seat.email:
                 continue
             seat.stack += self.auto_topup_amount
             self.action_history.append(
                 ActionRecord(
-                    actor_id=seat.player_id,
+                    actor_email=seat.email,
                     actor_name=seat.name,
                     action="manual_topup",
                     amount=self.auto_topup_amount,
@@ -221,13 +221,13 @@ class GameTable:
         return positions
 
     def _occupied_seat_indices(self) -> List[int]:
-        return [seat.seat_index for seat in self.seats if seat.player_id]
+        return [seat.seat_index for seat in self.seats if seat.email]
 
     def _active_seat_indices(self) -> List[int]:
         return [
             seat.seat_index
             for seat in self.seats
-            if seat.player_id
+            if seat.email
             and seat.seat_index not in self.pending_join_seats
             and seat.seat_index not in self.folded_seats
             and not self._is_all_in_like(seat.seat_index)
@@ -237,7 +237,7 @@ class GameTable:
         return [
             seat.seat_index
             for seat in self.seats
-            if seat.player_id
+            if seat.email
             and seat.seat_index not in self.pending_join_seats
             and seat.seat_index not in self.folded_seats
         ]
@@ -253,7 +253,7 @@ class GameTable:
     def _next_occupied_seat(self, start_index: int) -> Optional[int]:
         for offset in range(1, self.max_players + 1):
             seat_index = (start_index + offset) % self.max_players
-            if self.seats[seat_index].player_id:
+            if self.seats[seat_index].email:
                 return seat_index
         return None
 
@@ -261,7 +261,7 @@ class GameTable:
         for offset in range(1, self.max_players + 1):
             seat_index = (start_index + offset) % self.max_players
             if (
-                self.seats[seat_index].player_id
+                self.seats[seat_index].email
                 and seat_index not in self.pending_join_seats
                 and seat_index not in self.folded_seats
                 and not self._is_all_in_like(seat_index)
@@ -290,7 +290,7 @@ class GameTable:
         self.auto_play_seats.discard(seat.seat_index)
         self.pending_manual_topup_seats.discard(seat.seat_index)
         self.hand_start_stack_by_seat_index.pop(seat.seat_index, None)
-        seat.player_id = None
+        seat.email = None
         seat.name = None
         seat.stack = 0
         seat.last_action = None
@@ -307,18 +307,18 @@ class GameTable:
             if amount <= 0:
                 continue
             seat = self.seats[seat_index]
-            if seat.player_id:
+            if seat.email:
                 seat.stack += amount
         self.pending_payouts.clear()
         for seat in self.seats:
-            if seat.player_id and seat.stack == 0:
+            if seat.email and seat.stack == 0:
                 # If the player had already requested a manual top-up, treat this auto
                 # top-up as satisfying it (avoid doubling to 600).
                 self.pending_manual_topup_seats.discard(seat.seat_index)
                 seat.stack += self.auto_topup_amount
                 self.action_history.append(
                     ActionRecord(
-                        actor_id=seat.player_id,
+                        actor_email=seat.email,
                         actor_name=seat.name,
                         action="auto_topup",
                         amount=self.auto_topup_amount,
@@ -330,7 +330,7 @@ class GameTable:
     def build_earnings_updates(self) -> List[Dict[str, int | str]]:
         updates: List[Dict[str, int | str]] = []
         for seat in self.seats:
-            if not seat.player_id or not seat.hole_cards or len(seat.hole_cards) != 2:
+            if not seat.email or not seat.hole_cards or len(seat.hole_cards) != 2:
                 continue
             payout = self.pending_payouts.get(seat.seat_index, 0)
             contrib = self.hand_contribs.get(seat.seat_index, 0)
@@ -338,7 +338,7 @@ class GameTable:
             is_special = self._is_69_92_hand(seat.hole_cards)
             updates.append(
                 {
-                    "email": seat.player_id,
+                    "email": seat.email,
                     "hands": 1,
                     "chips_delta": delta,
                     "hands_69_92": 1 if is_special else 0,
@@ -359,7 +359,7 @@ class GameTable:
             return
         for seat_index in list(self.pending_leave_seats):
             seat = self.seats[seat_index]
-            if seat.player_id:
+            if seat.email:
                 self._clear_seat(seat)
             self.pending_leave_seats.discard(seat_index)
 
@@ -368,7 +368,7 @@ class GameTable:
             return
         for seat_index in list(self.leave_after_hand_seats):
             seat = self.seats[seat_index]
-            if seat.player_id:
+            if seat.email:
                 self._clear_seat(seat)
             self.leave_after_hand_seats.discard(seat_index)
 
@@ -378,8 +378,8 @@ class GameTable:
         for seat_index in list(self.pending_join_seats):
             self.pending_join_seats.discard(seat_index)
 
-    def find_seat(self, player_id: str) -> Optional[SeatState]:
-        return self._find_seat(player_id)
+    def find_seat(self, email: str) -> Optional[SeatState]:
+        return self._find_seat(email)
 
     def _all_pending_leaves(self) -> bool:
         occupied = self._occupied_seat_indices()
@@ -413,14 +413,14 @@ class GameTable:
                 safety += 1
                 continue
             seat = self.seats[seat_index]
-            if not seat.player_id:
+            if not seat.email:
                 self.current_turn_seat = self._next_active_seat(seat_index)
                 safety += 1
                 continue
             player_commit = self.street_contribs.get(seat_index, 0)
             to_call = max(0, self.current_bet - player_commit)
             action = ActionType.check if to_call == 0 else ActionType.fold
-            self.record_action(ActionPayload(player_id=seat.player_id, action=action))
+            self.record_action(ActionPayload(email=seat.email, action=action))
             safety += 1
 
     def _build_deck(self) -> List[str]:
@@ -607,7 +607,7 @@ class GameTable:
             self.pending_payouts[winner] = self.pending_payouts.get(winner, 0) + self.pot
             self.action_history.append(
                 ActionRecord(
-                    actor_id=self.seats[winner].player_id,
+                    actor_email=self.seats[winner].email,
                     actor_name=self.seats[winner].name,
                     action="payout",
                     amount=self.pot,
@@ -653,7 +653,7 @@ class GameTable:
                 )
                 self.action_history.append(
                     ActionRecord(
-                        actor_id=self.seats[seat_index].player_id,
+                        actor_email=self.seats[seat_index].email,
                         actor_name=self.seats[seat_index].name,
                         action="payout",
                         amount=payout,
@@ -664,14 +664,14 @@ class GameTable:
         self.pot = 0
         self.street = Street.settlement
 
-    def _find_seat(self, player_id: str) -> Optional[SeatState]:
+    def _find_seat(self, email: str) -> Optional[SeatState]:
         for seat in self.seats:
-            if seat.player_id == player_id:
+            if seat.email == email:
                 return seat
         return None
 
-    def join_player(self, player_id: str, name: str) -> SeatState:
-        existing = self._find_seat(player_id)
+    def join_player(self, email: str, name: str) -> SeatState:
+        existing = self._find_seat(email)
         if existing:
             if existing.seat_index in self.pending_leave_seats:
                 self.pending_leave_seats.discard(existing.seat_index)
@@ -682,8 +682,8 @@ class GameTable:
             return existing  # type: ignore[return-value]
 
         for seat in self.seats:
-            if seat.player_id is None:
-                seat.player_id = player_id
+            if seat.email is None:
+                seat.email = email
                 seat.name = name
                 seat.stack = self.buy_in
                 seat.is_ready = False
@@ -692,7 +692,7 @@ class GameTable:
                 seat.street_commit = 0
                 self.action_history.append(
                     ActionRecord(
-                        actor_id=player_id,
+                        actor_email=email,
                         actor_name=name,
                         action="join",
                         street=self.street,
@@ -701,17 +701,17 @@ class GameTable:
                 return seat
         raise ValueError("Table is full")
 
-    def reserve_seat(self, player_id: str, name: str, seat_index: int) -> SeatState:
+    def reserve_seat(self, email: str, name: str, seat_index: int) -> SeatState:
         if seat_index < 0 or seat_index >= self.max_players:
             raise ValueError("Invalid seat index")
-        existing = self._find_seat(player_id)
+        existing = self._find_seat(email)
         if existing and existing.seat_index != seat_index:
             raise ValueError("Player already seated")
         seat = self.seats[seat_index]
-        if seat.player_id and seat.player_id != player_id:
+        if seat.email and seat.email != email:
             raise ValueError("Seat already occupied")
-        if seat.player_id is None:
-            seat.player_id = player_id
+        if seat.email is None:
+            seat.email = email
             seat.name = name
             seat.stack = self.buy_in
             seat.is_ready = False
@@ -724,15 +724,15 @@ class GameTable:
             self.pending_join_seats.add(seat_index)
         return seat
 
-    def leave_player(self, player_id: str) -> None:
-        seat = self._find_seat(player_id)
+    def leave_player(self, email: str) -> None:
+        seat = self._find_seat(email)
         if not seat:
             return
         self.auto_play_seats.discard(seat.seat_index)
         in_active_hand = (
             seat.seat_index not in self.folded_seats
             and seat.seat_index not in self.pending_join_seats
-            and seat.player_id
+            and seat.email
             and self.street
             in (Street.preflop, Street.flop, Street.turn, Street.river)
         )
@@ -744,7 +744,7 @@ class GameTable:
             self._record_action(seat, "fold", detail="leave")
         self.action_history.append(
             ActionRecord(
-                actor_id=player_id,
+                actor_email=email,
                 actor_name=seat.name,
                 action="leave",
                 street=self.street,
@@ -759,8 +759,8 @@ class GameTable:
                 self._advance_turn_or_street()
         self._auto_play_pending_leaves()
 
-    def mark_leave_after_hand(self, player_id: str) -> None:
-        seat = self._find_seat(player_id)
+    def mark_leave_after_hand(self, email: str) -> None:
+        seat = self._find_seat(email)
         if not seat:
             return
         if self.street == Street.waiting:
@@ -768,27 +768,27 @@ class GameTable:
             return
         self.leave_after_hand_seats.add(seat.seat_index)
 
-    def cancel_leave_after_hand(self, player_id: str) -> None:
-        seat = self._find_seat(player_id)
+    def cancel_leave_after_hand(self, email: str) -> None:
+        seat = self._find_seat(email)
         if not seat:
             return
         if seat.seat_index in self.leave_after_hand_seats:
             self.leave_after_hand_seats.discard(seat.seat_index)
 
-    def mark_ready(self, player_id: str) -> None:
-        seat = self._find_seat(player_id)
+    def mark_ready(self, email: str) -> None:
+        seat = self._find_seat(email)
         if seat:
             seat.is_ready = True
 
     def all_ready(self) -> bool:
-        seated = [seat for seat in self.seats if seat.player_id]
+        seated = [seat for seat in self.seats if seat.email]
         return bool(seated) and all(seat.is_ready for seat in seated)
 
     def start_new_hand(self) -> None:
         if self.auto_play_seats:
             for seat_index in list(self.auto_play_seats):
                 seat = self.seats[seat_index]
-                if seat.player_id:
+                if seat.email:
                     self._clear_seat(seat)
         if len(self._occupied_seat_indices()) < 2:
             self.street = Street.waiting
@@ -829,7 +829,7 @@ class GameTable:
         self._apply_pending_manual_topups_for_new_hand()
         # Record "hand start" stack snapshots (pre forced blinds/bets).
         self.hand_start_stack_by_seat_index = {
-            s.seat_index: s.stack for s in self.seats if s.player_id
+            s.seat_index: s.stack for s in self.seats if s.email
         }
         deck = self._build_deck()
         self._deal_hole_cards(deck)
@@ -908,7 +908,7 @@ class GameTable:
         seat.street_commit = self.street_contribs[seat_index]
         self.action_history.append(
             ActionRecord(
-                actor_id=seat.player_id,
+                actor_email=seat.email,
                 actor_name=seat.name,
                 action=action,
                 amount=actual,
@@ -920,7 +920,7 @@ class GameTable:
         return
 
     def record_action(self, payload: ActionPayload, *, skip_auto_play: bool = False) -> None:
-        seat = self._find_seat(payload.player_id)
+        seat = self._find_seat(payload.email)
         if not seat:
             raise ValueError("Player not seated")
         if seat.seat_index != self.current_turn_seat:
@@ -1063,8 +1063,8 @@ class GameTable:
         if not skip_auto_play:
             self.apply_auto_play()
 
-    def set_auto_play(self, player_id: str, enabled: bool) -> None:
-        seat = self._find_seat(player_id)
+    def set_auto_play(self, email: str, enabled: bool) -> None:
+        seat = self._find_seat(email)
         if not seat:
             return
         if enabled:
@@ -1094,7 +1094,7 @@ class GameTable:
                 safety += 1
                 continue
             seat = self.seats[seat_index]
-            if not seat.player_id:
+            if not seat.email:
                 self._advance_turn_or_street()
                 safety += 1
                 continue
@@ -1102,13 +1102,13 @@ class GameTable:
             to_call = max(0, self.current_bet - player_commit)
             action = ActionType.check if to_call == 0 else ActionType.fold
             self.record_action(
-                ActionPayload(player_id=seat.player_id, action=action),
+                ActionPayload(email=seat.email, action=action),
                 skip_auto_play=True,
             )
             safety += 1
 
-    def record_hand_reveal(self, player_id: str) -> bool:
-        seat = self._find_seat(player_id)
+    def record_hand_reveal(self, email: str) -> bool:
+        seat = self._find_seat(email)
         if not seat:
             return False
         if self.street != Street.settlement:
@@ -1116,7 +1116,7 @@ class GameTable:
         if any(action.action == "showdown" for action in self.action_history):
             return False
         if any(
-            action.action == "hand_reveal" and action.actor_id == player_id
+            action.action == "hand_reveal" and action.actor_email == email
             for action in self.action_history
         ):
             return False
@@ -1130,7 +1130,7 @@ class GameTable:
     ) -> None:
         self.action_history.append(
             ActionRecord(
-                actor_id=seat.player_id,
+                actor_email=seat.email,
                 actor_name=seat.name,
                 action=action,
                 amount=amount,
@@ -1197,7 +1197,7 @@ class GameTable:
         contributions = {
             seat_index: self.street_contribs.get(seat_index, 0)
             for seat_index in range(self.max_players)
-            if self.seats[seat_index].player_id
+            if self.seats[seat_index].email
         }
         if not contributions:
             return
@@ -1279,7 +1279,7 @@ class GameTable:
                 self.dealer_seat
             )  # first to act postflop
 
-    def to_state(self, connected_player_ids: Optional[Set[str]] = None) -> TableState:
+    def to_state(self, connected_emails: Optional[Set[str]] = None) -> TableState:
         """
         Legacy state builder (no per-viewer sanitization).
         Prefer `to_state_for(...)` for WebSocket payloads.
@@ -1298,7 +1298,7 @@ class GameTable:
                 detail = None
             sanitized_action_history.append(
                 ActionRecord(
-                    actor_id=action.actor_id,
+                    actor_email=action.actor_email,
                     actor_name=action.actor_name,
                     action=action.action,
                     amount=action.amount,
@@ -1307,15 +1307,15 @@ class GameTable:
                 )
             )
         seats = []
-        connected = connected_player_ids or set()
+        connected = connected_emails or set()
         for seat in self.seats:
             is_connected = True
-            if seat.player_id and connected_player_ids is not None:
-                is_connected = seat.player_id in connected
+            if seat.email and connected_emails is not None:
+                is_connected = seat.email in connected
             seats.append(
                 SeatState(
                     seat_index=seat.seat_index,
-                    player_id=seat.player_id,
+                    email=seat.email,
                     name=seat.name,
                     stack=seat.stack,
                     hand_start_stack=self.hand_start_stack_by_seat_index.get(seat.seat_index),
@@ -1353,8 +1353,8 @@ class GameTable:
 
     def to_state_for(
         self,
-        viewer_player_id: Optional[str],
-        connected_player_ids: Optional[Set[str]] = None,
+        viewer_email: Optional[str],
+        connected_emails: Optional[Set[str]] = None,
     ) -> TableState:
         """
         Build a per-viewer table state.
@@ -1377,7 +1377,7 @@ class GameTable:
                 detail = None
             sanitized_action_history.append(
                 ActionRecord(
-                    actor_id=action.actor_id,
+                    actor_email=action.actor_email,
                     actor_name=action.actor_name,
                     action=action.action,
                     amount=action.amount,
@@ -1387,8 +1387,8 @@ class GameTable:
             )
             if action.action == "showdown":
                 has_showdown = True
-            if action.action == "hand_reveal" and action.actor_id:
-                revealed_ids.add(action.actor_id)
+            if action.action == "hand_reveal" and action.actor_email:
+                revealed_ids.add(action.actor_email)
 
         auto_runout = (
             self.current_turn_seat is None
@@ -1396,23 +1396,23 @@ class GameTable:
             and self.should_auto_runout()
         )
 
-        connected = connected_player_ids or set()
+        connected = connected_emails or set()
         seats: List[SeatState] = []
         for seat in self.seats:
             is_connected = True
-            if seat.player_id and connected_player_ids is not None:
-                is_connected = seat.player_id in connected
+            if seat.email and connected_emails is not None:
+                is_connected = seat.email in connected
 
             hole_cards_out: Optional[List[str]] = None
             if seat.hole_cards:
                 # Show actual cards to owner
-                if viewer_player_id and seat.player_id == viewer_player_id:
+                if viewer_email and seat.email == viewer_email:
                     hole_cards_out = seat.hole_cards
                 # Show actual cards during showdown (only non-folded seats)
                 elif (has_showdown or auto_runout) and seat.seat_index not in self.folded_seats:
                     hole_cards_out = seat.hole_cards
                 # Show actual cards if explicitly revealed in uncontested settlement
-                elif self.street == Street.settlement and seat.player_id and seat.player_id in revealed_ids:
+                elif self.street == Street.settlement and seat.email and seat.email in revealed_ids:
                     hole_cards_out = seat.hole_cards
                 else:
                     # Mask: keep length=2 so UI can render card backs
@@ -1421,7 +1421,7 @@ class GameTable:
             seats.append(
                 SeatState(
                     seat_index=seat.seat_index,
-                    player_id=seat.player_id,
+                    email=seat.email,
                     name=seat.name,
                     stack=seat.stack,
                     hand_start_stack=self.hand_start_stack_by_seat_index.get(seat.seat_index),
@@ -1478,14 +1478,14 @@ class ConnectionManager:
     def get_auth_user(self, websocket: WebSocket) -> Optional[str]:
         return self.socket_auth_user.get(websocket)
 
-    def set_player(self, websocket: WebSocket, player_id: str) -> None:
-        self.socket_players[websocket] = player_id
+    def set_player(self, websocket: WebSocket, email: str) -> None:
+        self.socket_players[websocket] = email
 
     def get_player(self, websocket: WebSocket) -> Optional[str]:
         return self.socket_players.get(websocket)
 
-    def has_player(self, player_id: str) -> bool:
-        return player_id in self.socket_players.values()
+    def has_player(self, email: str) -> bool:
+        return email in self.socket_players.values()
 
     def disconnect(self, websocket: WebSocket) -> None:
         table_id = self.socket_tables.get(websocket)

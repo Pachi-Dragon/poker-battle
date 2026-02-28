@@ -8,6 +8,8 @@ web/.env.local
 web/.env.*.local
 
 # Python (api)
+api/data/allows.json
+api/data/earnings.json
 api/.venv/
 api/.env
 api/src/__pycache__/

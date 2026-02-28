@@ -8,16 +8,14 @@ export default async function GamePage() {
         redirect("/")
     }
 
-    const playerId =
+    const email =
         session.user.email ?? session.user.name ?? `guest-${crypto.randomUUID()}`
     const defaultName = session.user.name ?? session.user.email ?? "Guest"
-    const email = session.user.email ?? null
 
     return (
         <JoinTableScreen
-            playerId={playerId}
-            defaultName={defaultName}
             email={email}
+            defaultName={defaultName}
         />
     )
 }

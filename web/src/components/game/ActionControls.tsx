@@ -13,7 +13,7 @@ type RaiseSlot = "normal" | "stop-next"
 
 interface ActionControlsProps {
     table: TableState | null
-    playerId: string
+    email: string
     onAction: (payload: ActionPayload) => void
     className?: string
     forceAllFold?: boolean
@@ -74,7 +74,7 @@ const emptySlotClass = "rounded px-2.5 py-1.5 text-sm font-semibold bg-white/10 
 
 export function ActionControls({
     table,
-    playerId,
+    email,
     onAction,
     className = "",
     forceAllFold = false,
@@ -104,16 +104,16 @@ export function ActionControls({
     } | null>(null)
     const isTurn = useMemo(() => {
         if (!table) return false
-        const seat = table.seats.find((item) => item.player_id === playerId)
+        const seat = table.seats.find((item) => item.email === email)
         if (!seat || table.current_turn_seat === null || table.current_turn_seat === undefined)
             return false
         return seat.seat_index === table.current_turn_seat
-    }, [table, playerId])
+    }, [table, email])
     const isTurnReady = isTurn && interactionEnabled
     const seat = useMemo(() => {
         if (!table) return null
-        return table.seats.find((item) => item.player_id === playerId) ?? null
-    }, [table, playerId])
+        return table.seats.find((item) => item.email === email) ?? null
+    }, [table, email])
     const toCall = useMemo(() => {
         if (!table || !seat) return 0
         return Math.max(0, table.current_bet - seat.street_commit)
@@ -126,7 +126,7 @@ export function ActionControls({
         seat &&
         table.seats.some(
             (other) =>
-                other.player_id &&
+                other.email &&
                 other.seat_index !== seat.seat_index &&
                 !other.is_folded &&
                 !other.is_all_in
@@ -187,7 +187,7 @@ export function ActionControls({
         setAmountOverlayOpen(false)
         resetQuickBetScroll()
         onAction({
-            player_id: playerId,
+            email,
             action,
             amount,
         })
@@ -261,13 +261,13 @@ export function ActionControls({
         const key = `${table.hand_number}-${table.street}-${toCall}-${table.current_bet}`
         if (lastAutoActionRef.current === key) return
         if (toCall === 0) {
-            onAction({ player_id: playerId, action: "check", amount: undefined })
+            onAction({ email, action: "check", amount: undefined })
             setAllFoldCheckedThisStreet(true)
         } else {
-            onAction({ player_id: playerId, action: "fold", amount: undefined })
+            onAction({ email, action: "fold", amount: undefined })
         }
         lastAutoActionRef.current = key
-    }, [allFoldEnabled, isTurn, table, toCall, playerId, onAction])
+    }, [allFoldEnabled, isTurn, table, toCall, email, onAction])
 
     useEffect(() => {
         if (!isTurnReady) {
@@ -446,7 +446,7 @@ export function ActionControls({
                                 type="button"
                                 className={`rounded px-2.5 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/20 whitespace-nowrap flex-1 min-w-0 text-center h-full flex items-center justify-center ${getActionButtonClass("bet")}`}
                                 onClick={() => handleAmountAction(betRaiseButton.action)}
-                                disabled={!table || !playerId || !isTurn}
+                                disabled={!table || !email || !isTurn}
                             >
                                 {betRaiseButton.label}
                             </button>
@@ -492,12 +492,12 @@ export function ActionControls({
                                 if (checkCallBtn)
                                     resetQuickBetScroll()
                                 onAction({
-                                    player_id: playerId,
+                                    email,
                                     action: checkCallBtn.action,
                                     amount: undefined,
                                 })
                             }}
-                            disabled={!table || !playerId || !isTurn}
+                            disabled={!table || !email || !isTurn}
                         >
                             {checkCallBtn.label}
                         </button>
@@ -529,12 +529,12 @@ export function ActionControls({
                                 if (foldBlocked) return
                                 resetQuickBetScroll()
                                 onAction({
-                                    player_id: playerId,
+                                    email,
                                     action: "fold",
                                     amount: undefined,
                                 })
                             }}
-                            disabled={!table || !playerId || foldBlocked || forceAllFold}
+                            disabled={!table || !email || foldBlocked || forceAllFold}
                         >
                             Fold
                         </button>
@@ -549,7 +549,7 @@ export function ActionControls({
                                 if (forceAllFold) return
                                 setAllFoldEnabled((prev) => !prev)
                             }}
-                            disabled={!table || !playerId || forceAllFold}
+                            disabled={!table || !email || forceAllFold}
                         >
                             {allFoldEnabled ? "All Fold ON" : "All Fold OFF"}
                         </button>

@@ -11,7 +11,7 @@ export type ActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in"
 
 export interface SeatState {
     seat_index: number
-    player_id?: string | null
+    email?: string | null
     name?: string | null
     stack: number
     /** ハンド開始時点のスタック（ブラインド等の強制ベット前） */
@@ -29,7 +29,7 @@ export interface SeatState {
 }
 
 export interface ActionRecord {
-    actor_id?: string | null
+    actor_email?: string | null
     actor_name?: string | null
     action: string
     amount?: number | null
@@ -62,7 +62,7 @@ export interface TableState {
 }
 
 export interface JoinTablePayload {
-    player_id: string
+    email: string
     name: string
 }
 
@@ -74,13 +74,13 @@ export interface EarningsSummary {
 }
 
 export interface ActionPayload {
-    player_id: string
+    email: string
     action: ActionType
     amount?: number
 }
 
 export interface ReserveSeatPayload {
-    player_id: string
+    email: string
     name: string
     seat_index: number
 }
