@@ -1,7 +1,10 @@
 import asyncio
 import os
+from urllib.parse import parse_qs
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from jose import JWTError, jwt
 from pydantic import BaseModel
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -49,6 +52,8 @@ app.add_middleware(
 
 # Google Cloud Consoleで取得したクライアントIDを環境変数から読み込む
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+# WebSocket認証用（NextAuthのAUTH_SECRETと同一の値を使用）
+AUTH_SECRET = os.getenv("AUTH_SECRET")
 
 # フロントエンドから送られてくるデータの型定義
 class AuthRequest(BaseModel):
@@ -100,10 +105,42 @@ async def google_login(auth_data: AuthRequest):
         raise HTTPException(status_code=401, detail="Invalid Google Token")
 
 
+def _verify_ws_token(token: str | None) -> str | None:
+    """WebSocket用トークンを検証し、認証済みemailを返す。無効ならNone。"""
+    if not token or not AUTH_SECRET:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            AUTH_SECRET,
+            algorithms=["HS256"],
+            options={"require": ["sub", "exp"]},
+        )
+        email = payload.get("sub")
+        return email if isinstance(email, str) and email else None
+    except JWTError:
+        return None
+
+
 @app.websocket("/ws/game")
 async def websocket_game(websocket: WebSocket):
+    # 接続前にクエリパラメータからトークンを取得して検証
+    raw_query = websocket.scope.get("query_string") or b""
+    query_string = raw_query.decode("utf-8") if isinstance(raw_query, bytes) else raw_query
+    params = parse_qs(query_string)
+    token = (params.get("token") or [None])[0]
+
+    auth_user = _verify_ws_token(token)
+    if not auth_user:
+        # accept してから close しないとクライアントに close code が届かない
+        await websocket.accept()
+        await websocket.close(code=4001)  # 4001: 認証失敗
+        return
+
     table_id = table.table_id
     await manager.connect(table_id, websocket)
+    manager.set_auth_user(websocket, auth_user)
+
     def connected_emails() -> set[str]:
         connections = manager.active_connections.get(table_id, set())
         return {
@@ -221,15 +258,31 @@ async def websocket_game(websocket: WebSocket):
             message_type = message.get("type")
             payload = message.get("payload") or {}
 
+            # 認証済みユーザーのみ操作可能。emailは常にauth_userを使用（なりすまし防止）
+            auth_user = manager.get_auth_user(websocket)
+            if not auth_user:
+                await manager.send(
+                    websocket,
+                    {"type": "error", "payload": {"message": "Authentication required"}},
+                )
+                continue
+
             if message_type == "joinTable":
                 data = JoinTablePayload(**payload)
-                manager.set_player(websocket, data.email)
-                await cancel_pending_leave(data.email)
-                await cancel_pending_disconnect(data.email)
-                table.set_auto_play(data.email, False)
-                existing = table.find_seat(data.email)
+                # emailは認証ユーザーと一致する必要がある
+                if data.email.lower() != auth_user.lower():
+                    await manager.send(
+                        websocket,
+                        {"type": "error", "payload": {"message": "email must match authenticated user"}},
+                    )
+                    continue
+                manager.set_player(websocket, auth_user)
+                await cancel_pending_leave(auth_user)
+                await cancel_pending_disconnect(auth_user)
+                table.set_auto_play(auth_user, False)
+                existing = table.find_seat(auth_user)
                 if existing:
-                    table.join_player(data.email, data.name)
+                    table.join_player(auth_user, data.name)
                 elif table.street in (Street.preflop, Street.flop, Street.turn, Street.river):
                     # hand in progress: wait for seat reservation
                     pass
@@ -238,29 +291,33 @@ async def websocket_game(websocket: WebSocket):
                     pass
                 await broadcast_table_state()
             elif message_type == "leaveTable":
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    await schedule_leave(email)
+                if auth_user:
+                    await schedule_leave(auth_user)
             elif message_type == "leaveNow":
                 # 即時離席（待機/未着席UIから参加画面に戻る用途）
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    await cancel_pending_leave(email)
-                    await cancel_pending_disconnect(email)
-                    table.leave_player(email)
+                if auth_user:
+                    await cancel_pending_leave(auth_user)
+                    await cancel_pending_disconnect(auth_user)
+                    table.leave_player(auth_user)
                     await broadcast_table_state()
             elif message_type == "leaveAfterHand":
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    table.mark_leave_after_hand(email)
+                if auth_user:
+                    table.mark_leave_after_hand(auth_user)
                     await broadcast_table_state()
             elif message_type == "cancelLeaveAfterHand":
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    table.cancel_leave_after_hand(email)
+                if auth_user:
+                    table.cancel_leave_after_hand(auth_user)
                     await broadcast_table_state()
             elif message_type == "action":
                 data = ActionPayload(**payload)
+                if data.email.lower() != auth_user.lower():
+                    await manager.send(
+                        websocket,
+                        {"type": "error", "payload": {"message": "email must match authenticated user"}},
+                    )
+                    continue
+                # 認証ユーザーで上書き（クライアント送信を信頼しない）
+                data = ActionPayload(email=auth_user, action=data.action, amount=data.amount)
                 table.record_action(data)
                 await manager.broadcast(
                     table_id,
@@ -279,15 +336,12 @@ async def websocket_game(websocket: WebSocket):
                 ):
                     await wait_for_all_gauges_then_start_hand()
             elif message_type == "nextHandGaugeComplete":
-                email = payload.get("email") or manager.get_player(websocket)
-                if email and table.street == Street.settlement:
-                    settlement_gauge_ready.add(email)
+                if auth_user and table.street == Street.settlement:
+                    settlement_gauge_ready.add(auth_user)
                     await check_gauge_complete_and_start()
             elif message_type == "revealHand":
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    data = RevealHandPayload(email=email)
-                    if table.record_hand_reveal(data.email):
+                if auth_user:
+                    if table.record_hand_reveal(auth_user):
                         await broadcast_table_state()
             elif message_type == "syncState":
                 await manager.send(
@@ -299,7 +353,13 @@ async def websocket_game(websocket: WebSocket):
                 pass
             elif message_type == "reserveSeat":
                 data = ReserveSeatPayload(**payload)
-                table.reserve_seat(data.email, data.name, data.seat_index)
+                if data.email.lower() != auth_user.lower():
+                    await manager.send(
+                        websocket,
+                        {"type": "error", "payload": {"message": "email must match authenticated user"}},
+                    )
+                    continue
+                table.reserve_seat(auth_user, data.name, data.seat_index)
                 await broadcast_table_state()
             elif message_type == "resetTable":
                 table.reset()
@@ -310,12 +370,12 @@ async def websocket_game(websocket: WebSocket):
                     await broadcast_table_state()
             elif message_type == "requestManualTopup":
                 # Next hand: +300 chips (only when stack <= 100). Earnings unaffected.
-                email = payload.get("email") or manager.get_player(websocket)
-                if email:
-                    table.request_manual_topup(email)
-                    # No visible change until next hand, but we still broadcast so the UI can
-                    # stay in sync if needed.
-                    await broadcast_table_state()
+                if auth_user:
+                    try:
+                        table.request_manual_topup(auth_user)
+                    except ValueError:
+                        pass  # 条件を満たさない場合は無視
+                await broadcast_table_state()
             elif message_type == "startHand":
                 if (
                     table.street == Street.waiting
